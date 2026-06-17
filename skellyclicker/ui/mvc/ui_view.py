@@ -98,6 +98,7 @@ class SkellyClickerUIView:
     click_save_path_label: tk.Label = None
     load_click_data_button: tk.Button = None
     clear_click_data_button: tk.Button = None
+    set_save_path_button: tk.Button = None
     machine_labels_path_var: tk.StringVar = field(default_factory=lambda: tk.StringVar(value="No file saved"))
     machine_labels_path_label: tk.Label = None
     load_machine_labels_button: tk.Button = None
@@ -362,6 +363,12 @@ class SkellyClickerUIView:
             text="Clear Click Data",
         )
         self.clear_click_data_button.pack(side=tk.LEFT, padx=5)
+
+        self.set_save_path_button = tk.Button(
+            data_handling_frame,
+            text="Set Save Path",
+        )
+        self.set_save_path_button.pack(side=tk.LEFT, padx=5)
 
         self.load_machine_labels_button = tk.Button(
             data_handling_frame,

@@ -75,7 +75,12 @@ def fill_in_labelled_data_folder(path_to_videos_for_training: str,
 
         logger.info(f'Looking for labeled frames for {video_path}')
 
-        labeled_rows = video_df[~video_df.iloc[:, 2:].isna().all(axis=1)]
+        label_columns = [
+            column
+            for column in video_df.columns
+            if column not in ("video", "frame")
+        ]
+        labeled_rows = video_df[video_df[label_columns].notna().any(axis=1)]
         for _, row in labeled_rows.iterrows():
             frame_number = int(row["frame"])
 

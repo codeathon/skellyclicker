@@ -116,8 +116,28 @@ class DataHandler(BaseModel):
         self.active_point = self.config.tracked_point_names[new_position]
         logger.debug(f"Active point set to {self.active_point}")
 
+    def _video_name_for_index(self, video_index: int) -> str | None:
+        if video_index < 0 or video_index >= len(self.config.video_names):
+            logger.error(
+                "Video index %s out of range for %s videos",
+                video_index,
+                len(self.config.video_names),
+            )
+            return None
+        return self.config.video_names[video_index]
+
+    def _row_for_video_frame(self, video_name: str, frame_number: int) -> pd.Series | None:
+        if (video_name, frame_number) not in self.dataframe.index:
+            return None
+        video_frame_row = self.dataframe.loc[(video_name, frame_number)]
+        if len(video_frame_row.shape) > 1:
+            video_frame_row = video_frame_row.iloc[0]
+        return video_frame_row
+
     def update_dataframe(self, click_data: ClickData, point_name: str | None = None):
-        video_name = self.config.video_names[click_data.video_index]
+        video_name = self._video_name_for_index(click_data.video_index)
+        if video_name is None:
+            return
         # TODO - NO LIST INDEXING!! We've been burned by this so many times - dicts with video names as keys or something like that would be better
         if point_name is None:
             point_name = self.active_point
@@ -134,7 +154,9 @@ class DataHandler(BaseModel):
         ] = click_data.y
 
     def clear_current_point(self, video_index: int, frame_number: int):
-        video_name = self.config.video_names[video_index]
+        video_name = self._video_name_for_index(video_index)
+        if video_name is None:
+            return
         self.dataframe.loc[(video_name, frame_number), f"{self.active_point}_x"] = (
             np.nan
         )
@@ -148,12 +170,12 @@ class DataHandler(BaseModel):
     def get_data_by_video_frame(
         self, video_index: int, frame_number: int
     ) -> dict[str, ClickData]:
-        video_name = self.config.video_names[video_index]
-        video_frame_row = self.dataframe.loc[(video_name, frame_number)]
-
-        # TODO: There is some error in the DLC machine labels that sometimes returns duplicate data, this pulls the first occurence for each row
-        if len(video_frame_row.shape) > 1:
-            video_frame_row = video_frame_row.iloc[0]
+        video_name = self._video_name_for_index(video_index)
+        if video_name is None:
+            return {}
+        video_frame_row = self._row_for_video_frame(video_name, frame_number)
+        if video_frame_row is None:
+            return {}
         click_data = {}
         for point_name in self.config.tracked_point_names:
             x = video_frame_row[f"{point_name}_x"]
@@ -172,12 +194,12 @@ class DataHandler(BaseModel):
     def get_data_by_video_name_and_frame(
         self, video_name: str, frame_number: int
     ) -> dict[str, ClickData]:
+        if video_name not in self.config.video_names:
+            return {}
         video_index = self.config.video_names.index(video_name)
-        video_frame_row = self.dataframe.loc[(video_name, frame_number)]
-
-        # TODO: There is some error in the DLC machine labels that sometimes returns duplicate data, this pulls the first occurence for each row
-        if len(video_frame_row.shape) > 1:
-            video_frame_row = video_frame_row.iloc[0]
+        video_frame_row = self._row_for_video_frame(video_name, frame_number)
+        if video_frame_row is None:
+            return {}
         click_data = {}
         for point_name in self.config.tracked_point_names:
             x = video_frame_row[f"{point_name}_x"]
@@ -194,7 +216,7 @@ class DataHandler(BaseModel):
         return click_data
 
     def get_nonempty_frames(self) -> list[int]:
-        mask = self.dataframe.iloc[:, 2:].notna().any(axis=1)
+        mask = self.dataframe.notna().any(axis=1)
         nonempty_dataframe = self.dataframe[mask]
         nonempty_frames = nonempty_dataframe.index.get_level_values("frame").unique()
         return sorted(nonempty_frames.tolist())

@@ -149,6 +149,11 @@ class VideoViewer(BaseModel):
         elif key == ord("c"):
             self.auto_next_point = not self.auto_next_point
         elif key == ord("v"):
+            if self.active_cell is None:
+                logger.warning(
+                    "Copy machine labels requested before mouse entered a video cell"
+                )
+                return True
             self.video_handler.copy_frame_data_from_machine_labels(
                 self.frame_number,
                 video_index=self.active_cell[1]

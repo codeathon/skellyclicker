@@ -29,6 +29,12 @@ from skellyclicker.core.deeplabcut_handler.analyze_videos_dlc import analyze_vid
 logger = logging.getLogger(__name__)
 
 
+def _videotype_from_paths(video_paths: list[str]) -> str:
+	"""Infer DLC videotype extension from the first selected video path."""
+	suffix = Path(video_paths[0]).suffix.lower()
+	return suffix if suffix else ".mp4"
+
+
 class PointConnection(BaseModel):
     parent: str
     child: str
@@ -190,11 +196,12 @@ class DeeplabcutHandler(BaseModel):
     ) -> str:
         config = auxiliaryfunctions.read_config(self.project_config_path)
         Path(output_folder).mkdir(parents=True, exist_ok=True)
+        videotype = _videotype_from_paths(video_paths)
 
         analyze_videos_dlc(
             config=str(self.project_config_path),
             videos=video_paths,
-            videotype=".mp4",
+            videotype=videotype,
             save_as_csv=True,
             destfolder = str(output_folder),
             batch_size=8,  # 16 is too high for 5 mocap videos
@@ -206,7 +213,7 @@ class DeeplabcutHandler(BaseModel):
             deeplabcut.filterpredictions(
                 str(self.project_config_path),
                 video_paths,
-                videotype=".mp4",
+                videotype=videotype,
                 filtertype="median",
                 windowlength=5,
                 destfolder=str(output_folder),
@@ -244,17 +251,32 @@ class DeeplabcutHandler(BaseModel):
             output_path=str(csv_path),
             filtered=filter_videos,
         )
+        csv_path_str = str(csv_path)
 
+        # Machine labels CSV is the analyze deliverable; annotation is optional and fail-soft.
         if annotate_videos:
-            self.annotate_videos(
-                output_path=str(output_folder),
-                csv_path=str(csv_path),
-                video_paths=[Path(video) for video in video_paths]
-            )
+            try:
+                self.annotate_videos(
+                    output_path=str(output_folder),
+                    csv_path=csv_path_str,
+                    video_paths=[Path(video) for video in video_paths],
+                )
+            except KeyboardInterrupt:
+                logger.warning(
+                    "Video annotation interrupted; machine labels remain at %s",
+                    csv_path_str,
+                )
+                raise
+            except Exception as error:
+                logger.exception("Video annotation failed after merge")
+                print(
+                    "Warning: video annotation failed, but machine labels CSV was saved to "
+                    f"{csv_path_str}: {error}"
+                )
         else:
             print("Skipping video annotation")
 
-        return str(csv_path)
+        return csv_path_str
 
     def merge_csvs_for_skellyclicker(
         self, csv_folder_path: str | Path, output_path: str | Path, filtered: bool = False
@@ -262,15 +284,22 @@ class DeeplabcutHandler(BaseModel):
         dataframe_list = []
         csv_folder_path = Path(csv_folder_path)
         if filtered:
-            csv_paths = csv_folder_path.glob("*_filtered.csv")
+            csv_paths = sorted(csv_folder_path.glob("*DLC*_filtered.csv"))
         else:
-            csv_paths = set(csv_folder_path.glob("*.csv")).difference(set(csv_folder_path.glob("*_filtered.csv")))
+            csv_paths = sorted(
+                path
+                for path in csv_folder_path.glob("*DLC*.csv")
+                if not path.name.endswith("_filtered.csv")
+            )
+        csv_paths = [
+            path
+            for path in csv_paths
+            if not path.name.startswith("skellyclicker_")
+        ]
         if not csv_paths:
             raise FileNotFoundError(
-                f"No matching CSV files found in {csv_folder_path}. Please check the path."
+                f"No matching DLC CSV files found in {csv_folder_path}. Please check the path."
             )
-        csv_paths = set(csv_paths).difference(set(csv_folder_path.glob(".csv")))
-        csv_paths = sorted(list(csv_paths))
         for csv in csv_paths:
             df = pd.read_csv(csv)
 

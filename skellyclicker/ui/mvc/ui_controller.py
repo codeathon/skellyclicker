@@ -1,14 +1,22 @@
 import time
 import os
+import threading
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, simpledialog, messagebox, NORMAL, DISABLED
 
+import pandas as pd
 from deeplabcut.utils import auxiliaryfunctions
 from pydantic import ValidationError
 
 from skellyclicker.core.deeplabcut_handler.create_deeplabcut.deelabcut_project_config import (
     DeeplabcutTrainingConfig,
+)
+from skellyclicker.core.session_validation import (
+    bodypart_names_from_csv_columns,
+    validate_bodypart_overlap,
+    validate_label_csv_against_videos,
 )
 from skellyclicker.ui.mvc.ui_model import SkellyClickerUIModel
 from skellyclicker.core.deeplabcut_handler.deeplabcut_handler import DeeplabcutHandler
@@ -25,6 +33,100 @@ class SkellyClickerUIController:
 
     video_viewer: VideoViewer | None = None
     deeplabcut_handler: DeeplabcutHandler | None = None
+    _background_job_running: bool = False
+
+    def _run_background_job(
+        self,
+        job_name: str,
+        worker,
+        on_success,
+        on_error=None,
+    ) -> None:
+        if self._background_job_running:
+            messagebox.showinfo(
+                "Job In Progress",
+                f"Another background job is already running ({job_name}).",
+            )
+            return
+
+        self._background_job_running = True
+        self._set_dlc_buttons_state(DISABLED)
+        print(f"Starting background job: {job_name}")
+
+        def _worker_wrapper():
+            try:
+                result = worker()
+                self.ui_view.root.after(0, lambda: self._finish_background_job(on_success, result))
+            except Exception as error:
+                tb = traceback.format_exc()
+                self.ui_view.root.after(
+                    0,
+                    lambda: self._finish_background_job(
+                        on_error or self._default_background_error,
+                        (job_name, error, tb),
+                    ),
+                )
+
+        threading.Thread(target=_worker_wrapper, daemon=True).start()
+
+    def _finish_background_job(self, callback, result) -> None:
+        self._background_job_running = False
+        self._set_dlc_buttons_state(NORMAL)
+        callback(result)
+
+    def _default_background_error(self, result) -> None:
+        job_name, error, tb = result
+        print(tb)
+        messagebox.showerror(
+            f"{job_name} Failed",
+            f"{job_name} failed:\n{error}",
+        )
+
+    def _set_dlc_buttons_state(self, state) -> None:
+        self.ui_view.train_deeplabcut_model_button.config(state=state)
+        self.ui_view.analyze_videos_button.config(state=state)
+
+    def _set_machine_labels_path(self, machine_labels_path: str) -> None:
+        self.ui_model.machine_labels_path = machine_labels_path
+        self.ui_view.machine_labels_path_var.set(machine_labels_path)
+
+    def _validate_before_open_videos(self) -> bool:
+        warnings: list[str] = []
+        if self.ui_model.csv_saved_path:
+            warnings.extend(
+                validate_label_csv_against_videos(
+                    self.ui_model.csv_saved_path,
+                    self.ui_model.video_files or [],
+                    "Human labels",
+                )
+            )
+        if self.ui_model.machine_labels_path:
+            warnings.extend(
+                validate_label_csv_against_videos(
+                    self.ui_model.machine_labels_path,
+                    self.ui_model.video_files or [],
+                    "Machine labels",
+                )
+            )
+            if self.ui_model.csv_saved_path:
+                human_parts = bodypart_names_from_csv_columns(
+                    list(pd.read_csv(self.ui_model.csv_saved_path, nrows=0).columns)
+                )
+                machine_parts = bodypart_names_from_csv_columns(
+                    list(pd.read_csv(self.ui_model.machine_labels_path, nrows=0).columns)
+                )
+                warnings.extend(validate_bodypart_overlap(human_parts, machine_parts))
+
+        if not warnings:
+            return True
+
+        detail = "\n".join(f"- {warning}" for warning in warnings)
+        proceed = messagebox.askyesno(
+            "Label CSV Mismatch",
+            "Some label files do not align with the loaded videos.\n\n"
+            f"{detail}\n\nOpen videos anyway?",
+        )
+        return proceed
 
     def load_deeplabcut_project(self) -> None:
         project_path = filedialog.askdirectory(
@@ -54,24 +156,25 @@ class SkellyClickerUIController:
                 "DeepLabCut Project Name", "Enter name for new deeplabcut project:"
             )
             if project_name:
-                full_project_path = os.path.join(project_path, project_name)
-                self.ui_model.project_path = full_project_path
-                self.ui_view.deeplabcut_project_path_var.set(full_project_path)
-
                 if (
                     self.ui_model.tracked_point_names is None
                     or len(self.ui_model.tracked_point_names) == 0
                 ):
-                    print(
-                        "No tracked point names available, load and label videos before creating deeplabcut project"
+                    messagebox.showinfo(
+                        "No Tracked Points",
+                        "Load and label videos before creating a DeepLabCut project.",
                     )
                     return
+
+                full_project_path = os.path.join(project_path, project_name)
                 self.deeplabcut_handler = DeeplabcutHandler.create_deeplabcut_project(
                     project_name=project_name,
                     project_parent_directory=project_path,
                     tracked_point_names=self.ui_model.tracked_point_names,
                     connections=None,  # TODO: Handle connections somehow
                 )
+                self.ui_model.project_path = full_project_path
+                self.ui_view.deeplabcut_project_path_var.set(full_project_path)
                 self.ui_view.current_iteration_var.set(
                     str(self.deeplabcut_handler.iteration)
                 )
@@ -103,8 +206,10 @@ class SkellyClickerUIController:
         ):
             self.ui_model.csv_saved_path = csv_file
             self.ui_view.click_save_path_var.set(csv_file)
+            self.ui_model.tracked_point_names = bodypart_names_from_csv_columns(
+                list(pd.read_csv(csv_file, nrows=0).columns)
+            )
             print(f"Labels CSV loaded from: {csv_file}")
-            # TODO: set ui_model tracked point names from csv files
         else:
             print("Invalid CSV file selected or file does not exist")
 
@@ -152,6 +257,9 @@ class SkellyClickerUIController:
 
     def open_videos(self) -> None:
         if self.ui_model.video_files:
+            if not self._validate_before_open_videos():
+                return
+
             self.ui_view.videos_directory_path_var.set(
                 ", ".join(self.ui_model.video_files)
             )
@@ -191,7 +299,10 @@ class SkellyClickerUIController:
                 "Save Data Confirmation",
                 "Confirm your choice: Click 'yes' to prevent data loss or 'no' to discard the labeled data:",
             )
-        save_path = self.video_viewer.video_handler.close(save_data=save_data)
+        save_path = self.video_viewer.video_handler.close(
+            save_data=save_data,
+            save_path=self.ui_model.csv_saved_path,
+        )
 
         if save_data and save_path:
             self.ui_model.csv_saved_path = save_path
@@ -207,7 +318,6 @@ class SkellyClickerUIController:
         if not self.ui_model.project_path:
             messagebox.showinfo("No Project", "Please load or create a project first")
             return
-        print("Training model...")
         if self.deeplabcut_handler is None:
             messagebox.showinfo(
                 "No DeepLabCut Handler", "DeepLabCut handler not initialized"
@@ -225,20 +335,28 @@ class SkellyClickerUIController:
                 "Attempted to train model without saving data, must label videos before training",
             )
             return
+
         training_config = DeeplabcutTrainingConfig(
             epochs=self.ui_model.training_epochs,
             save_epochs=self.ui_model.training_save_epochs,
             batch_size=self.ui_model.training_batch_size,
             hflip_augmentation=self.ui_model.hflip_augmentation,
         )
-        self.deeplabcut_handler.train_model(
-            labels_csv_path=self.ui_model.csv_saved_path,
-            video_paths=self.ui_model.video_files,
-            training_config=training_config,
-        )
-        self.ui_view.current_iteration_var.set(str(self.deeplabcut_handler.iteration))
 
-        print("Model completed training")
+        def worker():
+            self.deeplabcut_handler.train_model(
+                labels_csv_path=self.ui_model.csv_saved_path,
+                video_paths=self.ui_model.video_files,
+                training_config=training_config,
+            )
+            return self.deeplabcut_handler.iteration
+
+        def on_success(iteration: int) -> None:
+            self.ui_view.current_iteration_var.set(str(iteration))
+            print("Model completed training")
+            messagebox.showinfo("Training Complete", "DeepLabCut training finished.")
+
+        self._run_background_job("Train DLC Model", worker, on_success)
 
     def analyze_videos(self) -> None:
         if not self.ui_model.project_path:
@@ -286,17 +404,38 @@ class SkellyClickerUIController:
             return
 
         video_paths = list(video_paths)
+        copy_flag = copy_to_machine_labels
+        annotate_videos = self.ui_model.annotate_videos
+        filter_predictions = self.ui_model.filter_predictions
+        output_folder_path = output_folder
+        handler = self.deeplabcut_handler
 
-        machine_labels_path = self.deeplabcut_handler.analyze_videos(
-            video_paths=video_paths,
-            annotate_videos=self.ui_model.annotate_videos,
-            filter_videos=self.ui_model.filter_predictions,
-            output_folder=output_folder,
-        )
+        def worker():
+            machine_labels_path = handler.analyze_videos(
+                video_paths=video_paths,
+                annotate_videos=annotate_videos,
+                filter_videos=filter_predictions,
+                output_folder=output_folder_path,
+            )
+            return machine_labels_path, copy_flag
 
-        if copy_to_machine_labels:
-            self.ui_model.machine_labels_path = machine_labels_path
-        print("Videos analyzed")
+        def on_success(result) -> None:
+            machine_labels_path, should_copy = result
+            if should_copy:
+                self._set_machine_labels_path(machine_labels_path)
+            print("Videos analyzed")
+            messagebox.showinfo(
+                "Analyze Complete",
+                f"Analysis finished.\nMachine labels CSV:\n{machine_labels_path}",
+            )
+            if should_copy and messagebox.askyesno(
+                "Open Videos",
+                "Re-open videos now to overlay machine labels?\n"
+                "Press 'm' in the viewer to toggle overlays.",
+            ):
+                self.open_videos()
+
+        self._run_background_job("Analyze Videos", worker, on_success)
 
     def set_save_path(self) -> None:
         file_path = filedialog.asksaveasfilename(
@@ -335,6 +474,7 @@ class SkellyClickerUIController:
         with open(output_path, "w") as f:
             f.write(json_data)
 
+        self.ui_model.session_saved_path = output_path
         print(f"Session successfully saved to: {output_path}")
 
     def load_session(self) -> None:
@@ -381,6 +521,9 @@ class SkellyClickerUIController:
         self.ui_view.autosave_boolean_var.set(self.ui_model.auto_save)
         self.ui_view.show_help_boolean_var.set(self.ui_model.show_help)
         self.ui_view.annotate_videos_boolean_var.set(self.ui_model.annotate_videos)
+        self.ui_view.deeplabcut_filter_predictions_var.set(
+            self.ui_model.filter_predictions
+        )
         if self.ui_model.video_files:
             self.ui_view.videos_directory_path_var.set(
                 ", ".join(self.ui_model.video_files)
@@ -404,7 +547,7 @@ class SkellyClickerUIController:
             self.ui_view.deeplabcut_batch_size_var.set(
                 self.ui_model.training_batch_size
             )
-        if self.ui_model.frame_count and self.ui_model.labeled_frames:
+        if self.ui_model.frame_count > 0:
             self.ui_view.labeling_progress.update(
                 self.ui_model.frame_count, self.ui_model.labeled_frames
             )
