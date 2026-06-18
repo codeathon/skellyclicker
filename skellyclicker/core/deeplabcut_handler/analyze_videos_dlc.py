@@ -309,6 +309,18 @@ def analyze_videos_dlc(
             )
     except (OSError, RuntimeError):
         pass
+
+    from skellyclicker.services.dlc_paths import resolve_analyze_iteration
+
+    analyze_iteration = resolve_analyze_iteration(project_path, cfg)
+    if analyze_iteration != int(cfg["iteration"]):
+        print(
+            f"Using dlc-models-pytorch/iteration-{analyze_iteration} for analyze "
+            f"(config.yaml iteration is {cfg['iteration']})"
+        )
+    cfg = dict(cfg)
+    cfg["iteration"] = analyze_iteration
+
     train_fraction = cfg["TrainingFraction"][trainingsetindex]
     model_folder = project_path / auxiliaryfunctions.get_model_folder(
         train_fraction,
@@ -321,6 +333,12 @@ def analyze_videos_dlc(
 
     # Read the inference configuration, load the model
     model_cfg_path = train_folder / Engine.PYTORCH.pose_cfg_name
+    print(f"Loading PyTorch model config: {model_cfg_path}")
+    if not model_cfg_path.is_file():
+        raise FileNotFoundError(
+            f"PyTorch model config not found: {model_cfg_path}. "
+            f"Train the network for iteration-{analyze_iteration} first."
+        )
     model_cfg = auxiliaryfunctions.read_plainconfig(model_cfg_path)
     pose_task = Task(model_cfg["method"])
 

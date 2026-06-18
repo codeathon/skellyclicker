@@ -20,6 +20,54 @@ def resolve_dlc_project_input(path: str) -> tuple[Path, Path]:
 	)
 
 
+DEEPLABCUT_CONFIG = "config.yaml"
+PYTORCH_MODELS_DIR = "dlc-models-pytorch"
+PYTORCH_TRAIN_CONFIG = "pytorch_config.yaml"
+
+
+def iteration_has_pytorch_model(project_dir: Path, iteration: int) -> bool:
+	"""True if iteration-N contains a shuffle folder with train/pytorch_config.yaml."""
+	iter_root = project_dir / PYTORCH_MODELS_DIR / f"iteration-{iteration}"
+	if not iter_root.is_dir():
+		return False
+	return any(
+		(shuffle_dir / "train" / PYTORCH_TRAIN_CONFIG).is_file()
+		for shuffle_dir in iter_root.iterdir()
+		if shuffle_dir.is_dir()
+	)
+
+
+def latest_iteration_with_pytorch_model(project_dir: Path) -> int | None:
+	"""Highest iteration-N on disk that has a usable PyTorch train config."""
+	root = project_dir / PYTORCH_MODELS_DIR
+	if not root.is_dir():
+		return None
+	found: list[int] = []
+	for iter_dir in root.glob("iteration-*"):
+		try:
+			n = int(iter_dir.name.split("-", 1)[1])
+		except (IndexError, ValueError):
+			continue
+		if iteration_has_pytorch_model(project_dir, n):
+			found.append(n)
+	return max(found) if found else None
+
+
+def resolve_analyze_iteration(project_dir: Path, cfg: dict) -> int:
+	"""Pick iteration for analyze: config value if model exists, else latest on disk."""
+	cfg_iter = int(cfg["iteration"])
+	if iteration_has_pytorch_model(project_dir, cfg_iter):
+		return cfg_iter
+	latest = latest_iteration_with_pytorch_model(project_dir)
+	if latest is not None:
+		return latest
+	raise FileNotFoundError(
+		f"No trained PyTorch model under {project_dir / PYTORCH_MODELS_DIR}. "
+		f"config.yaml iteration={cfg_iter} but no train/{PYTORCH_TRAIN_CONFIG} was found. "
+		"Train the network before analyzing."
+	)
+
+
 def dlc_project_dir(project_config_path: str) -> Path:
 	"""Project root from the loaded config.yaml path (authoritative for SkellyClicker)."""
 	return Path(project_config_path).expanduser().resolve().parent

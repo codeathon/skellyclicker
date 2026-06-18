@@ -75,8 +75,6 @@ class DLCJobRunner:
 		video_paths: list[str],
 		use_training_videos: bool,
 	) -> BackgroundJob:
-		from skellyclicker.services.dlc_paths import analyze_output_folder
-
 		store = self._store
 		session = store.session
 		if not store.dlc_handler:
@@ -93,14 +91,31 @@ class DLCJobRunner:
 
 		def worker() -> None:
 			try:
+				from deeplabcut.utils import auxiliaryfunctions
+
+				from skellyclicker.services.dlc_paths import (
+					analyze_output_folder,
+					dlc_project_dir,
+					resolve_analyze_iteration,
+				)
+
 				job.status = JobStatus.running
 				self._append_log(job, "Analysis started")
-				# Anchor output to loaded config.yaml's directory, not yaml project_path field.
+				project_dir = dlc_project_dir(handler.project_config_path)
+				cfg = auxiliaryfunctions.read_config(handler.project_config_path)
+				analyze_iter = resolve_analyze_iteration(project_dir, cfg)
+				handler.iteration = analyze_iter
+				session.dlc_iteration = analyze_iter
+				if analyze_iter != int(cfg["iteration"]):
+					self._append_log(
+						job,
+						f"Using iteration-{analyze_iter} (config.yaml says {cfg['iteration']})",
+					)
 				output_folder = analyze_output_folder(
 					handler.project_config_path,
 					use_training_videos,
 					video_paths,
-					iteration=handler.iteration,
+					iteration=analyze_iter,
 				)
 				self._append_log(job, f"Output folder: {output_folder}")
 				machine_path = handler.analyze_videos(
