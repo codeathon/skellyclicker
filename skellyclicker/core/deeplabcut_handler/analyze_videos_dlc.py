@@ -296,7 +296,19 @@ def analyze_videos_dlc(
 
     # Load the project configuration
     cfg = auxiliaryfunctions.read_config(config)
-    project_path = Path(cfg["project_path"])
+    # Model weights live under the config.yaml directory, not necessarily cfg["project_path"]
+    # (which can be stale/relative and causes deep wrong paths to pytorch_config.yaml).
+    config_path = Path(config).expanduser().resolve()
+    project_path = config_path.parent
+    yaml_project_path = Path(cfg["project_path"]).expanduser()
+    try:
+        if project_path != yaml_project_path.resolve():
+            print(
+                f"Note: config.yaml project_path ({yaml_project_path}) differs from "
+                f"config directory ({project_path}); using config directory for models."
+            )
+    except (OSError, RuntimeError):
+        pass
     train_fraction = cfg["TrainingFraction"][trainingsetindex]
     model_folder = project_path / auxiliaryfunctions.get_model_folder(
         train_fraction,

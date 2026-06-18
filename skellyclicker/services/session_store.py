@@ -135,6 +135,10 @@ class SessionStore:
 		self.session.status_message = "Labels saved" if save else "Labeling closed"
 		return refresh_workflow_state(self.session)
 
+	def _sync_dlc_iteration_from_handler(self) -> None:
+		if self.dlc_handler is not None:
+			self.session.dlc_iteration = self.dlc_handler.iteration
+
 	def load_dlc_project(self, project_path: str) -> AppSession:
 		from skellyclicker.core.deeplabcut_handler.deeplabcut_handler import (
 			DeeplabcutHandler,
@@ -146,11 +150,11 @@ class SessionStore:
 		except ValueError as exc:
 			raise SessionError(str(exc)) from exc
 		self.dlc_handler = DeeplabcutHandler.load_deeplabcut_project(
-			project_config_path=str(config_path)
+			project_config_path=str(config_path.resolve())
 		)
 		# Store resolved project dir — same folder that contains the loaded config.yaml.
 		self.session.dlc_project_path = str(project_dir)
-		self.session.dlc_iteration = self.dlc_handler.iteration
+		self._sync_dlc_iteration_from_handler()
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
 		return refresh_workflow_state(self.session)
@@ -177,8 +181,9 @@ class SessionStore:
 				config_path = None
 			if config_path is not None:
 				self.dlc_handler = DeeplabcutHandler.load_deeplabcut_project(
-					project_config_path=str(config_path)
+					project_config_path=str(config_path.resolve())
 				)
+				self._sync_dlc_iteration_from_handler()
 		return refresh_workflow_state(self.session)
 
 
