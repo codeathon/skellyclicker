@@ -13,7 +13,9 @@ from skellyclicker.services.models import AppSession, WorkflowState
 from skellyclicker.services.errors import SessionConflictError, SessionError
 from skellyclicker.services.session_store import store
 
-FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+# Repo root is two levels above skellyclicker/api/app.py
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
 app = FastAPI(title="SkellyClicker", version="0.2.0")
 
@@ -244,3 +246,12 @@ async def job_websocket(websocket: WebSocket, job_id: str):
 
 if FRONTEND_DIST.is_dir():
 	app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="static")
+else:
+	@app.get("/")
+	def frontend_not_built():
+		raise HTTPException(
+			status_code=503,
+			detail=(
+				f"Frontend not built. Run: cd {REPO_ROOT / 'frontend'} && npm install && npm run build"
+			),
+		)
