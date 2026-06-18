@@ -24,4 +24,6 @@ class SkellyClickerUIModel(BaseModel):
     training_batch_size: int = 1
     filter_predictions: bool = False
     hflip_augmentation: bool = False
-    
+    # When true, training and the viewer use machine_labels_path and ignore human click CSV.
+    train_on_machine_labels: bool = False
+

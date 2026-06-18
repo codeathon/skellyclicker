@@ -90,32 +90,63 @@ class SkellyClickerUIController:
         self.ui_model.machine_labels_path = machine_labels_path
         self.ui_view.machine_labels_path_var.set(machine_labels_path)
 
+    def _resolve_open_video_label_paths(self) -> tuple[str | None, str | None]:
+        """Return (primary_label_path, machine_overlay_path) for the video viewer."""
+        if self.ui_model.train_on_machine_labels and self.ui_model.machine_labels_path:
+            # Machine CSV is the sole labeling source; human click CSV is ignored.
+            return self.ui_model.machine_labels_path, None
+        return self.ui_model.csv_saved_path, self.ui_model.machine_labels_path
+
+    def _training_labels_csv_path(self) -> str | None:
+        if self.ui_model.train_on_machine_labels:
+            return self.ui_model.machine_labels_path
+        return self.ui_model.csv_saved_path
+
+    def _default_label_save_path(self) -> str | None:
+        if self.ui_model.train_on_machine_labels:
+            return self.ui_model.machine_labels_path
+        return self.ui_model.csv_saved_path
+
     def _validate_before_open_videos(self) -> bool:
         warnings: list[str] = []
-        if self.ui_model.csv_saved_path:
-            warnings.extend(
-                validate_label_csv_against_videos(
-                    self.ui_model.csv_saved_path,
-                    self.ui_model.video_files or [],
-                    "Human labels",
+        if self.ui_model.train_on_machine_labels:
+            if self.ui_model.machine_labels_path:
+                warnings.extend(
+                    validate_label_csv_against_videos(
+                        self.ui_model.machine_labels_path,
+                        self.ui_model.video_files or [],
+                        "Machine labels",
+                    )
                 )
-            )
-        if self.ui_model.machine_labels_path:
-            warnings.extend(
-                validate_label_csv_against_videos(
-                    self.ui_model.machine_labels_path,
-                    self.ui_model.video_files or [],
-                    "Machine labels",
-                )
-            )
+        else:
             if self.ui_model.csv_saved_path:
-                human_parts = bodypart_names_from_csv_columns(
-                    list(pd.read_csv(self.ui_model.csv_saved_path, nrows=0).columns)
+                warnings.extend(
+                    validate_label_csv_against_videos(
+                        self.ui_model.csv_saved_path,
+                        self.ui_model.video_files or [],
+                        "Human labels",
+                    )
                 )
-                machine_parts = bodypart_names_from_csv_columns(
-                    list(pd.read_csv(self.ui_model.machine_labels_path, nrows=0).columns)
+            if self.ui_model.machine_labels_path:
+                warnings.extend(
+                    validate_label_csv_against_videos(
+                        self.ui_model.machine_labels_path,
+                        self.ui_model.video_files or [],
+                        "Machine labels",
+                    )
                 )
-                warnings.extend(validate_bodypart_overlap(human_parts, machine_parts))
+                if self.ui_model.csv_saved_path:
+                    human_parts = bodypart_names_from_csv_columns(
+                        list(pd.read_csv(self.ui_model.csv_saved_path, nrows=0).columns)
+                    )
+                    machine_parts = bodypart_names_from_csv_columns(
+                        list(
+                            pd.read_csv(
+                                self.ui_model.machine_labels_path, nrows=0
+                            ).columns
+                        )
+                    )
+                    warnings.extend(validate_bodypart_overlap(human_parts, machine_parts))
 
         if not warnings:
             return True
@@ -228,6 +259,10 @@ class SkellyClickerUIController:
             self.ui_model.machine_labels_path = machine_labels_file
             print(f"Machine labels CSV loaded from: {machine_labels_file}")
             self.ui_view.machine_labels_path_var.set(machine_labels_file)
+            if self.ui_model.train_on_machine_labels:
+                self.ui_model.tracked_point_names = bodypart_names_from_csv_columns(
+                    list(pd.read_csv(machine_labels_file, nrows=0).columns)
+                )
         else:
             print("Invalid CSV file selected or file does not exist")
 
@@ -269,16 +304,19 @@ class SkellyClickerUIController:
                 self.video_viewer.stop()
                 print("Previous video viewer stopped")
 
-            if self.ui_model.csv_saved_path:
+            primary_label_path, machine_overlay_path = (
+                self._resolve_open_video_label_paths()
+            )
+            if primary_label_path:
                 self.video_viewer = VideoViewer.from_videos(
                     video_paths=self.ui_model.video_files,
-                    data_handler_path=self.ui_model.csv_saved_path,
-                    machine_labels_path=self.ui_model.machine_labels_path,
+                    data_handler_path=primary_label_path,
+                    machine_labels_path=machine_overlay_path,
                 )
             else:
                 self.video_viewer = VideoViewer.from_videos(
                     video_paths=self.ui_model.video_files,
-                    machine_labels_path=self.ui_model.machine_labels_path,
+                    machine_labels_path=machine_overlay_path,
                 )
             self.ui_model.tracked_point_names = (
                 self.video_viewer.video_handler.data_handler.config.tracked_point_names
@@ -301,12 +339,15 @@ class SkellyClickerUIController:
             )
         save_path = self.video_viewer.video_handler.close(
             save_data=save_data,
-            save_path=self.ui_model.csv_saved_path,
+            save_path=self._default_label_save_path(),
         )
 
         if save_data and save_path:
-            self.ui_model.csv_saved_path = save_path
-            self.ui_view.click_save_path_var.set(save_path)
+            if self.ui_model.train_on_machine_labels:
+                self._set_machine_labels_path(save_path)
+            else:
+                self.ui_model.csv_saved_path = save_path
+                self.ui_view.click_save_path_var.set(save_path)
             self.update_progress()
             messagebox.showinfo("Data Saved", f"Data saved to: {save_path}")
         else:
@@ -326,14 +367,24 @@ class SkellyClickerUIController:
         if not self.ui_model.video_files:
             messagebox.showinfo(
                 "No Videos",
-                "Attempted to train model without loading videos, must load videos and label before training",
+                "Load videos before training.",
             )
             return
-        if not self.ui_model.csv_saved_path:
-            messagebox.showinfo(
-                "No Data",
-                "Attempted to train model without saving data, must label videos before training",
-            )
+
+        labels_csv_path = self._training_labels_csv_path()
+        if not labels_csv_path:
+            if self.ui_model.train_on_machine_labels:
+                messagebox.showinfo(
+                    "No Machine Labels",
+                    "Load a machine labels CSV before training, or disable "
+                    "'Train on Machine Labels'.",
+                )
+            else:
+                messagebox.showinfo(
+                    "No Data",
+                    "Save or load human click labels before training, or enable "
+                    "'Train on Machine Labels' to train from machine predictions.",
+                )
             return
 
         training_config = DeeplabcutTrainingConfig(
@@ -345,7 +396,7 @@ class SkellyClickerUIController:
 
         def worker():
             self.deeplabcut_handler.train_model(
-                labels_csv_path=self.ui_model.csv_saved_path,
+                labels_csv_path=labels_csv_path,
                 video_paths=self.ui_model.video_files,
                 training_config=training_config,
             )
@@ -524,6 +575,9 @@ class SkellyClickerUIController:
         self.ui_view.deeplabcut_filter_predictions_var.set(
             self.ui_model.filter_predictions
         )
+        self.ui_view.train_on_machine_labels_var.set(
+            self.ui_model.train_on_machine_labels
+        )
         if self.ui_model.video_files:
             self.ui_view.videos_directory_path_var.set(
                 ", ".join(self.ui_model.video_files)
@@ -569,6 +623,24 @@ class SkellyClickerUIController:
     def on_filter_predictions_toggle(self) -> None:
         self.ui_model.filter_predictions = self.ui_view.deeplabcut_filter_predictions_var.get()
         print(f"Filter predictions set to: {self.ui_model.filter_predictions}")
+
+    def on_train_on_machine_labels_toggle(self) -> None:
+        self.ui_model.train_on_machine_labels = (
+            self.ui_view.train_on_machine_labels_var.get()
+        )
+        print(
+            "Train on machine labels set to: "
+            f"{self.ui_model.train_on_machine_labels}"
+        )
+        if (
+            self.ui_model.train_on_machine_labels
+            and self.ui_model.machine_labels_path
+        ):
+            self.ui_model.tracked_point_names = bodypart_names_from_csv_columns(
+                list(
+                    pd.read_csv(self.ui_model.machine_labels_path, nrows=0).columns
+                )
+            )
 
     def on_training_epochs_change(self) -> None:
         try:

@@ -73,7 +73,7 @@ class VideoHandler(BaseModel):
                     marker_type=cv2.MARKER_CROSS,
                     marker_size=10,
                     marker_thickness=1,
-                    tracked_points=data_handler.config.tracked_point_names,
+                    tracked_points=machine_labels_handler.config.tracked_point_names,
                     show_clicks=False,
                 )
             )

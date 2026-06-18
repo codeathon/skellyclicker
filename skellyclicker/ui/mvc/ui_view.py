@@ -103,6 +103,8 @@ class SkellyClickerUIView:
     machine_labels_path_label: tk.Label = None
     load_machine_labels_button: tk.Button = None
     clear_machine_labels_button: tk.Button = None
+    train_on_machine_labels_var: tk.BooleanVar = field(default_factory=tk.BooleanVar)
+    train_on_machine_labels_checkbox: tk.Checkbutton = None
     save_session_button: tk.Button = None
     load_session_button: tk.Button = None
     clear_session_button: tk.Button = None
@@ -380,6 +382,13 @@ class SkellyClickerUIView:
             text="Clear Machine Labels",
         )
         self.clear_machine_labels_button.pack(side=tk.LEFT, padx=5)
+
+        self.train_on_machine_labels_checkbox = tk.Checkbutton(
+            data_handling_frame,
+            text="Train on Machine Labels",
+            variable=self.train_on_machine_labels_var,
+        )
+        self.train_on_machine_labels_checkbox.pack(side=tk.LEFT, padx=5)
 
 
 
