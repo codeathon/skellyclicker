@@ -11,7 +11,7 @@ from skellyclicker.services.labeling_engine import LabelingEngine
 from skellyclicker.services.models import AppSession, BackgroundJob, WorkflowState
 from skellyclicker.services.workflow import refresh_workflow_state
 
-DEEPLABCUT_CONFIG = "config.yaml"
+from skellyclicker.services.dlc_paths import resolve_dlc_project_input
 
 
 class SessionStore:
@@ -141,13 +141,15 @@ class SessionStore:
 		)
 
 		self._assert_no_active_job()
-		config_path = Path(project_path) / DEEPLABCUT_CONFIG
-		if not config_path.is_file():
-			raise SessionError("Not a DLC project directory")
+		try:
+			project_dir, config_path = resolve_dlc_project_input(project_path)
+		except ValueError as exc:
+			raise SessionError(str(exc)) from exc
 		self.dlc_handler = DeeplabcutHandler.load_deeplabcut_project(
 			project_config_path=str(config_path)
 		)
-		self.session.dlc_project_path = project_path
+		# Store resolved project dir — same folder that contains the loaded config.yaml.
+		self.session.dlc_project_path = str(project_dir)
 		self.session.dlc_iteration = self.dlc_handler.iteration
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
@@ -169,10 +171,13 @@ class SessionStore:
 				DeeplabcutHandler,
 			)
 
-			config = Path(self.session.dlc_project_path) / DEEPLABCUT_CONFIG
-			if config.is_file():
+			try:
+				_, config_path = resolve_dlc_project_input(self.session.dlc_project_path)
+			except ValueError:
+				config_path = None
+			if config_path is not None:
 				self.dlc_handler = DeeplabcutHandler.load_deeplabcut_project(
-					project_config_path=str(config)
+					project_config_path=str(config_path)
 				)
 		return refresh_workflow_state(self.session)
 
