@@ -9,12 +9,18 @@ function promptPath(label: string, defaultValue = ""): string | null {
   return v?.trim() || null;
 }
 
-function promptPaths(label: string): string[] | null {
-  const v = window.prompt(
-    label + "\n(Enter comma-separated absolute paths)",
-  );
+function promptPaths(label: string, existing: string[] = []): string[] | null {
+  const hint =
+    "Enter one path per line, or comma-separated.\n" +
+    (existing.length
+      ? `\nCurrently loaded (${existing.length}):\n${existing.map((p) => `• ${p}`).join("\n")}\n`
+      : "");
+  const v = window.prompt(label + hint);
   if (!v?.trim()) return null;
-  return v.split(",").map((p) => p.trim()).filter(Boolean);
+  return v
+    .split(/[\n,]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
 }
 
 /** Shown in header — saved filename or unsaved placeholder. */
@@ -177,14 +183,41 @@ export default function App() {
             <section className="panel actions">
               <div className="action-group">
                 <h3>Videos &amp; Labeling</h3>
+                {session.videos?.length ? (
+                  <ul className="video-list">
+                    {session.videos.map((p) => (
+                      <li key={p}>{p.split(/[/\\]/).pop() ?? p}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="hint inline-hint">
+                    Multi-camera: add each view (same folder for training).
+                  </p>
+                )}
                 <button
                   onClick={() => {
-                    const paths = promptPaths("Video file paths");
+                    const paths = promptPaths(
+                      "Replace all videos with:",
+                      session.videos ?? [],
+                    );
                     if (paths) run(() => client.setVideos(paths));
                   }}
                 >
-                  Select Videos
+                  {session.videos?.length ? "Replace Videos" : "Select Videos"}
                 </button>
+                {session.videos?.length ? (
+                  <button
+                    onClick={() => {
+                      const paths = promptPaths(
+                        "Add videos to the current list:",
+                        session.videos ?? [],
+                      );
+                      if (paths) run(() => client.addVideos(paths));
+                    }}
+                  >
+                    Add Videos
+                  </button>
+                ) : null}
                 <button
                   disabled={!session.videos?.length}
                   onClick={() => run(client.openLabeler)}

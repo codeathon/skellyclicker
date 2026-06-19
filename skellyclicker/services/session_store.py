@@ -59,15 +59,42 @@ class SessionStore:
 		self.session = AppSession()
 		return refresh_workflow_state(self.session)
 
-	def set_videos(self, paths: list[str]) -> AppSession:
-		self._assert_no_active_job()
+	def _validate_video_paths(self, paths: list[str]) -> list[str]:
+		if not paths:
+			raise SessionError("No video paths provided")
+		resolved: list[str] = []
 		for path in paths:
-			if not Path(path).is_file():
+			p = Path(path).expanduser()
+			if not p.is_file():
 				raise SessionError(f"Video not found: {path}")
+			resolved.append(str(p.resolve()))
+		return resolved
+
+	def _apply_videos(self, paths: list[str]) -> None:
+		"""Store video list and reset frame stats; close labeler if video set changed."""
+		if paths != (self.session.videos or []):
+			self._teardown_labeler()
 		self.session.videos = paths
 		self.session.frame_count = 0
 		self.session.workflow_state = WorkflowState.ready_to_label
 		self.session.status_message = f"{len(paths)} video(s) selected"
+
+	def set_videos(self, paths: list[str]) -> AppSession:
+		self._assert_no_active_job()
+		self._apply_videos(self._validate_video_paths(paths))
+		return self.session
+
+	def add_videos(self, paths: list[str]) -> AppSession:
+		"""Append videos to the session list (deduplicated, order preserved)."""
+		self._assert_no_active_job()
+		new_paths = self._validate_video_paths(paths)
+		existing = list(self.session.videos or [])
+		seen = set(existing)
+		for path in new_paths:
+			if path not in seen:
+				existing.append(path)
+				seen.add(path)
+		self._apply_videos(existing)
 		return self.session
 
 	def set_human_labels_path(self, path: str) -> AppSession:

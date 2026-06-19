@@ -14,14 +14,20 @@ function Row({ label, value }: { label: string; value: string | null | undefined
 }
 
 export function LoadedAssets({ session }: Props) {
-  const videoSummary = session.videos
-    ? `${session.videos.length} file(s)`
-    : null;
-
   return (
     <section className="panel assets">
       <h2>Loaded Assets</h2>
-      <Row label="Videos" value={videoSummary} />
+      <Row
+        label="Videos"
+        value={
+          session.videos?.length
+            ? `${session.videos.length} file(s)`
+            : null
+        }
+      />
+      {session.videos?.map((p) => (
+        <Row key={p} label="" value={p} />
+      ))}
       <Row label="Human labels" value={session.human_labels_path} />
       <Row label="Machine labels" value={session.machine_labels_path} />
       <Row label="DLC project" value={session.dlc_project_path} />

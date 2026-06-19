@@ -288,6 +288,19 @@ button:disabled {
   margin-left: auto;
 }
 
+.inline-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+}
+
+.video-list {
+  margin: 0 0 0.6rem;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: #c5d0de;
+  word-break: break-all;
+}
+
 .label-canvas {
   max-width: 100%;
   cursor: crosshair;

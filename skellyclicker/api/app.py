@@ -100,6 +100,11 @@ def set_videos(body: PathListBody) -> AppSession:
 	return store.set_videos(body.paths)
 
 
+@app.post("/api/videos/add", response_model=AppSession)
+def add_videos(body: PathListBody) -> AppSession:
+	return store.add_videos(body.paths)
+
+
 @app.post("/api/labels/human", response_model=AppSession)
 def set_human_labels(body: PathBody) -> AppSession:
 	return store.set_human_labels_path(body.path)
