@@ -212,6 +212,28 @@ export default function App() {
                 </button>
               </div>
 
+              <div className="session-actions">
+                <button
+                  onClick={() => {
+                    const p = promptPath(
+                      "Save session to",
+                      session.session_saved_path ?? "",
+                    );
+                    if (p) run(() => client.saveSession(p));
+                  }}
+                >
+                  Save Session
+                </button>
+                <button
+                  onClick={() => {
+                    const p = promptPath("Session JSON path");
+                    if (p) run(() => client.loadSession(p));
+                  }}
+                >
+                  Load Session
+                </button>
+              </div>
+
               {session.workflow_state === "review" && (
                 <div className="action-group highlight">
                   <h3>Review Predictions</h3>
@@ -228,28 +250,6 @@ export default function App() {
           )}
         </main>
       </div>
-
-      <footer className="session-footer">
-        <button
-          onClick={() => {
-            const p = promptPath(
-              "Save session to",
-              session.session_saved_path ?? "",
-            );
-            if (p) run(() => client.saveSession(p));
-          }}
-        >
-          Save Session
-        </button>
-        <button
-          onClick={() => {
-            const p = promptPath("Session JSON path");
-            if (p) run(() => client.loadSession(p));
-          }}
-        >
-          Load Session
-        </button>
-      </footer>
     </div>
   );
 }
