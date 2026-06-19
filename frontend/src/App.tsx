@@ -297,18 +297,13 @@ export default function App() {
                 <button
                   disabled={!!session.active_job_id || !session.dlc_project_path}
                   onClick={async () => {
-                    const useTraining = window.confirm(
-                      "Analyze training videos? OK = yes, Cancel = use custom list",
-                    );
-                    let paths = session.videos ?? [];
-                    if (!useTraining) {
-                      paths = promptPaths("Videos to analyze") ?? [];
+                    const paths = session.videos ?? [];
+                    if (!paths.length) {
+                      setError("Select videos before analyzing.");
+                      return;
                     }
                     try {
-                      const { job_id } = await client.analyze(
-                        paths,
-                        useTraining,
-                      );
+                      const { job_id } = await client.analyze(paths, true);
                       await startJob(job_id, "Analyze Videos");
                     } catch (e) {
                       setError(e instanceof Error ? e.message : String(e));

@@ -12,6 +12,8 @@
 #
 
 from __future__ import annotations
+
+from collections.abc import Callable
 from multiprocessing import Pool
 import torch.multiprocessing as mp
 
@@ -72,6 +74,7 @@ def analyze_videos_dlc(
     overwrite: bool = False,
     save_as_df: bool = False,
     multiprocess: bool = True,
+    progress_callback: Callable[[float, str], None] | None = None,
     **torch_kwargs,
 ):
     """Makes prediction based on a trained network.
@@ -462,7 +465,22 @@ def analyze_videos_dlc(
         )
         for video in videos
     ]
-    if multiprocess:
+    if progress_callback is not None:
+        # Sequential + tqdm hook — multiprocessing cannot share progress to the web UI.
+        from skellyclicker.core.deeplabcut_handler.dlc_progress import hook_dlc_tqdm
+
+        num_passes = 2 if detector_runner is not None else 1
+        for video_index, arg in enumerate(args):
+            video = arg[-1]
+            with hook_dlc_tqdm(
+                progress_callback,
+                video_index,
+                len(args),
+                video.name,
+                num_passes=num_passes,
+            ):
+                analyze_single_video_dlc(*arg)
+    elif multiprocess:
         try:
             with Pool(processes=len(videos)) as pool:
                 pool.starmap(

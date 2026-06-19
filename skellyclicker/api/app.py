@@ -265,7 +265,7 @@ async def job_websocket(websocket: WebSocket, job_id: str):
 					}
 				)
 				break
-			await asyncio.sleep(0.5)
+			await asyncio.sleep(0.15)
 	except WebSocketDisconnect:
 		pass
 

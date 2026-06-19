@@ -220,34 +220,19 @@ class DeeplabcutHandler(BaseModel):
         Path(output_folder).mkdir(parents=True, exist_ok=True)
 
         n_videos = max(len(video_paths), 1)
-        if progress_callback:
-            for i, video_path in enumerate(video_paths):
-                name = Path(video_path).name
-                report(
-                    0.05 + 0.70 * (i / n_videos),
-                    f"Analyzing video {i + 1}/{n_videos}: {name}",
-                )
-                analyze_videos_dlc(
-                    config=str(self.project_config_path),
-                    videos=[video_path],
-                    videotype=".mp4",
-                    save_as_csv=True,
-                    destfolder=str(output_folder),
-                    batch_size=8,
-                    multiprocess=False,
-                    overwrite=True,
-                )
-        else:
-            analyze_videos_dlc(
-                config=str(self.project_config_path),
-                videos=video_paths,
-                videotype=".mp4",
-                save_as_csv=True,
-                destfolder=str(output_folder),
-                batch_size=8,
-                multiprocess=True,
-                overwrite=True,
-            )
+        report(0.05, f"Analyzing {n_videos} video(s)…")
+        analyze_videos_dlc(
+            config=str(self.project_config_path),
+            videos=video_paths,
+            videotype=".mp4",
+            save_as_csv=True,
+            destfolder=str(output_folder),
+            batch_size=8,
+            multiprocess=progress_callback is None,
+            overwrite=True,
+            progress_callback=progress_callback,
+        )
+        report(0.75, "Inference complete")
 
         if filter_videos:
             report(0.78, "Filtering predictions…")
