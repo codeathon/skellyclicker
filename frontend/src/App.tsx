@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { AppSession, client } from "./api/client";
 import { LabelingCanvas } from "./components/LabelingCanvas";
 import { LoadedAssets } from "./components/LoadedAssets";
-import { WorkflowStepper } from "./components/WorkflowStepper";
 
 function promptPath(label: string, defaultValue = ""): string | null {
   const v = window.prompt(label, defaultValue);
@@ -17,6 +16,15 @@ function promptPaths(label: string): string[] | null {
   return v.split(",").map((p) => p.trim()).filter(Boolean);
 }
 
+/** Shown in header — saved filename or unsaved placeholder. */
+function sessionLabel(session: AppSession): string {
+  if (session.session_saved_path) {
+    const parts = session.session_saved_path.split(/[/\\]/);
+    return parts[parts.length - 1] || session.session_saved_path;
+  }
+  return "Unsaved session";
+}
+
 export default function App() {
   const [session, setSession] = useState<AppSession | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,9 +34,30 @@ export default function App() {
     setSession(await client.getSession());
   }, []);
 
+  const watchJob = useCallback(
+    (jobId: string) => {
+      const ws = new WebSocket(
+        `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/jobs/${jobId}`,
+      );
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "log") setJobLog((prev) => [...prev, msg.message]);
+        if (msg.type === "done") {
+          refresh();
+          ws.close();
+        }
+      };
+    },
+    [refresh],
+  );
+
+  // Fresh in-memory session every time the app is opened (no Start New button).
   useEffect(() => {
-    refresh().catch((e) => setError(String(e)));
-  }, [refresh]);
+    client
+      .newSession()
+      .then(setSession)
+      .catch((e) => setError(String(e)));
+  }, []);
 
   const run = async (fn: () => Promise<AppSession>) => {
     try {
@@ -39,21 +68,6 @@ export default function App() {
     }
   };
 
-  const watchJob = (jobId: string) => {
-    const ws = new WebSocket(
-      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/jobs/${jobId}`,
-    );
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === "log") setJobLog((prev) => [...prev, msg.message]);
-      if (msg.type === "done") {
-        refresh();
-        ws.close();
-      }
-    };
-    ws.onopen = () => ws.send("ping");
-  };
-
   if (!session) return <div className="app">Loading…</div>;
 
   const labeling = session.workflow_state === "labeling";
@@ -61,13 +75,15 @@ export default function App() {
   return (
     <div className="app">
       <header>
+        <div className="header-left">
+          <span className="session-label">{sessionLabel(session)}</span>
+          <p className="status">{session.status_message}</p>
+        </div>
         <h1>SkellyClicker</h1>
-        <p className="status">{session.status_message}</p>
       </header>
 
       <div className="layout">
         <aside>
-          <WorkflowStepper session={session} />
           <LoadedAssets session={session} />
         </aside>
 
@@ -81,42 +97,42 @@ export default function App() {
             <LabelingCanvas onClose={() => refresh()} />
           ) : (
             <section className="panel actions">
-              <h2>Workflow</h2>
-
-              <div className="action-group">
-                <h3>Session</h3>
-                <button onClick={() => run(client.newSession)}>Start New Session</button>
-                <button onClick={() => {
-                  const p = promptPath("Session JSON path");
-                  if (p) run(() => client.loadSession(p));
-                }}>Load Session</button>
-                <button onClick={() => {
-                  const p = promptPath("Save session to", session.session_saved_path ?? "");
-                  if (p) run(() => client.saveSession(p));
-                }}>Save Session</button>
-                <button onClick={() => run(client.clearSession)}>Clear Session</button>
-              </div>
-
               <div className="action-group">
                 <h3>Videos &amp; Labeling</h3>
-                <button onClick={() => {
-                  const paths = promptPaths("Video file paths");
-                  if (paths) run(() => client.setVideos(paths));
-                }}>Select Videos</button>
+                <button
+                  onClick={() => {
+                    const paths = promptPaths("Video file paths");
+                    if (paths) run(() => client.setVideos(paths));
+                  }}
+                >
+                  Select Videos
+                </button>
                 <button
                   disabled={!session.videos?.length}
                   onClick={() => run(client.openLabeler)}
                 >
                   Open Labeler
                 </button>
-                <button onClick={() => {
-                  const p = promptPath("Human labels CSV");
-                  if (p) run(() => client.setHumanLabels(p));
-                }}>Import Human Labels</button>
-                <button onClick={() => {
-                  const p = promptPath("Machine labels CSV");
-                  if (p) run(() => client.setMachineLabels(p));
-                }}>Import Machine Labels</button>
+              </div>
+
+              <div className="action-group">
+                <h3>Labels</h3>
+                <button
+                  onClick={() => {
+                    const p = promptPath("Human labels CSV");
+                    if (p) run(() => client.setHumanLabels(p));
+                  }}
+                >
+                  Import Human Labels
+                </button>
+                <button
+                  onClick={() => {
+                    const p = promptPath("Machine labels CSV");
+                    if (p) run(() => client.setMachineLabels(p));
+                  }}
+                >
+                  Import Machine Labels
+                </button>
                 <label className="checkbox">
                   <input
                     type="checkbox"
@@ -132,15 +148,28 @@ export default function App() {
 
               <div className="action-group">
                 <h3>DeepLabCut</h3>
-                <button onClick={() => {
-                  const parent = promptPath("Parent directory for new project");
-                  const name = promptPath("Project name");
-                  if (parent && name) run(() => client.createDlc(parent, name));
-                }}>Create DLC Project</button>
-                <button onClick={() => {
-                  const p = promptPath("DLC project directory");
-                  if (p) run(() => client.loadDlc(p));
-                }}>Load DLC Project</button>
+                <button
+                  onClick={() => {
+                    const parent = promptPath("Parent directory for new project");
+                    const name = promptPath("Project name");
+                    if (parent && name)
+                      run(() => client.createDlc(parent, name));
+                  }}
+                >
+                  Create DLC Project
+                </button>
+                <button
+                  onClick={() => {
+                    const p = promptPath("DLC project directory");
+                    if (p) run(() => client.loadDlc(p));
+                  }}
+                >
+                  Load DLC Project
+                </button>
+              </div>
+
+              <div className="action-group">
+                <h3>Train &amp; Analyze</h3>
                 <button
                   disabled={!!session.active_job_id || !session.dlc_project_path}
                   onClick={async () => {
@@ -167,7 +196,10 @@ export default function App() {
                       paths = promptPaths("Videos to analyze") ?? [];
                     }
                     try {
-                      const { job_id } = await client.analyze(paths, useTraining);
+                      const { job_id } = await client.analyze(
+                        paths,
+                        useTraining,
+                      );
                       setJobLog([]);
                       watchJob(job_id);
                       await refresh();
@@ -183,7 +215,10 @@ export default function App() {
               {session.workflow_state === "review" && (
                 <div className="action-group highlight">
                   <h3>Review Predictions</h3>
-                  <p>Machine labels loaded. Open the labeler to compare and correct.</p>
+                  <p>
+                    Machine labels loaded. Open the labeler to compare and
+                    correct.
+                  </p>
                   <button onClick={() => run(client.openLabeler)}>
                     Review in Labeler
                   </button>
@@ -193,6 +228,28 @@ export default function App() {
           )}
         </main>
       </div>
+
+      <footer className="session-footer">
+        <button
+          onClick={() => {
+            const p = promptPath(
+              "Save session to",
+              session.session_saved_path ?? "",
+            );
+            if (p) run(() => client.saveSession(p));
+          }}
+        >
+          Save Session
+        </button>
+        <button
+          onClick={() => {
+            const p = promptPath("Session JSON path");
+            if (p) run(() => client.loadSession(p));
+          }}
+        >
+          Load Session
+        </button>
+      </footer>
     </div>
   );
 }

@@ -11,19 +11,36 @@ body {
 
 .app {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 header {
   padding: 1rem 1.5rem;
   border-bottom: 1px solid #2a3441;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 1.5rem;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.session-label {
+  font-size: 0.85rem;
+  color: #7eb8ff;
+  font-weight: 500;
 }
 
 header h1 {
   margin: 0;
   font-size: 1.25rem;
+  flex-shrink: 0;
 }
 
 .status {
@@ -35,7 +52,22 @@ header h1 {
 .layout {
   display: grid;
   grid-template-columns: 280px 1fr;
-  min-height: calc(100vh - 60px);
+  flex: 1;
+  min-height: 0;
+}
+
+.session-footer {
+  border-top: 1px solid #2a3441;
+  padding: 0.75rem 1.5rem;
+  display: flex;
+  gap: 0.75rem;
+  background: #0f1419;
+}
+
+.session-footer button {
+  width: auto;
+  min-width: 9rem;
+  margin-bottom: 0;
 }
 
 aside {
@@ -65,37 +97,6 @@ main {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: #8b9cb3;
-}
-
-.stepper {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.step {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: #6b7d94;
-  padding: 0.35rem 0.5rem;
-  border-radius: 4px;
-}
-
-.step.active {
-  background: #1e3a5f;
-  color: #7eb8ff;
-}
-
-.step.done {
-  color: #5cb87a;
-}
-
-.step-num {
-  width: 1.25rem;
-  text-align: center;
-  font-weight: 600;
 }
 
 .asset-row {

@@ -63,7 +63,6 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const client = {
   getSession: () => api<AppSession>("/api/session"),
   newSession: () => api<AppSession>("/api/session/new", { method: "POST" }),
-  clearSession: () => api<AppSession>("/api/session/clear", { method: "POST" }),
   saveSession: (path: string) =>
     api<AppSession>("/api/session/save", {
       method: "POST",

@@ -21,14 +21,15 @@ export function LoadedAssets({ session }: Props) {
   return (
     <section className="panel assets">
       <h2>Loaded Assets</h2>
-      <Row label="Session" value={session.session_saved_path} />
       <Row label="Videos" value={videoSummary} />
       <Row label="Human labels" value={session.human_labels_path} />
       <Row label="Machine labels" value={session.machine_labels_path} />
       <Row label="DLC project" value={session.dlc_project_path} />
       <Row
         label="Iteration"
-        value={session.dlc_iteration != null ? String(session.dlc_iteration) : null}
+        value={
+          session.dlc_iteration != null ? String(session.dlc_iteration) : null
+        }
       />
       <Row
         label="Bodyparts"
