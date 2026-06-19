@@ -94,7 +94,7 @@ export default function App() {
           )}
 
           {labeling ? (
-            <LabelingCanvas onClose={() => refresh()} />
+            <LabelingCanvas onClose={(updated) => setSession(updated)} />
           ) : (
             <section className="panel actions">
               <div className="action-group">

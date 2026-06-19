@@ -5,9 +5,12 @@ from skellyclicker.services.models import AppSession, WorkflowState
 
 def derive_workflow_state(session: AppSession) -> WorkflowState:
 	"""Compute workflow state from session fields (unless a job is active)."""
-	if session.workflow_state in (WorkflowState.training, WorkflowState.analyzing):
+	if session.active_job_id and session.workflow_state in (
+		WorkflowState.training,
+		WorkflowState.analyzing,
+	):
 		return session.workflow_state
-	if session.workflow_state == WorkflowState.labeling:
+	if session.labeling_session_id:
 		return WorkflowState.labeling
 	if not session.videos:
 		return WorkflowState.needs_videos if session.session_saved_path else WorkflowState.idle
@@ -21,9 +24,8 @@ def derive_workflow_state(session: AppSession) -> WorkflowState:
 
 
 def refresh_workflow_state(session: AppSession) -> AppSession:
-	"""Update workflow_state from current assets unless labeling or job is active."""
-	if session.workflow_state in (
-		WorkflowState.labeling,
+	"""Recompute workflow_state from current assets and runtime handles."""
+	if session.active_job_id and session.workflow_state in (
 		WorkflowState.training,
 		WorkflowState.analyzing,
 	):

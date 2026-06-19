@@ -183,12 +183,30 @@ button:disabled {
   margin-bottom: 1rem;
 }
 
+.labeling {
+  outline: none;
+}
+
 .labeling-toolbar {
   display: flex;
-  gap: 1.5rem;
+  gap: 1rem;
   margin-bottom: 0.75rem;
   font-size: 0.9rem;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.labeling-nav {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.labeling-nav button,
+.close-labeler {
+  width: auto;
+  margin-bottom: 0;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.85rem;
 }
 
 .hint {

@@ -29,3 +29,15 @@ def test_bump_generation_on_teardown(fresh_store):
 	gen = fresh_store.session.generation
 	fresh_store._teardown_all()
 	assert fresh_store.session.generation == gen + 1
+
+
+def test_close_labeler_leaves_labeling_state(fresh_store):
+	"""Closing labeler must exit workflow_state=labeling (regression)."""
+	from skellyclicker.services.models import WorkflowState
+	from skellyclicker.services.workflow import refresh_workflow_state
+
+	fresh_store.session.workflow_state = WorkflowState.labeling
+	fresh_store.session.labeling_session_id = None
+	fresh_store.session.videos = ["/tmp/fake.mp4"]
+	refresh_workflow_state(fresh_store.session)
+	assert fresh_store.session.workflow_state != WorkflowState.labeling
