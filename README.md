@@ -18,10 +18,34 @@ For labelling and training data through DeepLabCut.
 
 ## How To Use
 
+### Web UI (recommended)
+
 1. Activate the environment.
 
-2. Open the GUI.
-    - `python skellyclicker/__main__.py`
+2. Install Python dependencies and build the frontend:
+
+    ```bash
+    pip install -e .
+    cd frontend && npm install && npm run build && cd ..
+    ```
+
+3. Start the web server (opens your browser automatically):
+
+    ```bash
+    python -m skellyclicker.api
+    ```
+
+4. Follow the workflow stepper: **Session → Videos → Label → DLC Project → Train → Analyze → Review**.
+
+   Paths are entered as absolute filesystem paths (local lab tool).
+
+### Legacy Tk UI
+
+1. Activate the environment.
+
+2. Open the legacy GUI:
+
+    - `python -m skellyclicker`
 
 3. Start a new session or load an existing one.
     - When loading a session, look for the `.json` file you saved on a previous session.

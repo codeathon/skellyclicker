@@ -176,3 +176,5 @@ skellyclicker/.DS_Store
 .DS_Store
 .vscode/settings.json
 CLAUDE.md
+frontend/node_modules/
+frontend/dist/
