@@ -183,6 +183,80 @@ button:disabled {
   margin-bottom: 1rem;
 }
 
+.job-progress {
+  background: #161d27;
+  border: 1px solid #2a3441;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.job-progress--completed {
+  border-color: #2d5a3d;
+}
+
+.job-progress--failed {
+  border-color: #7a3030;
+}
+
+.job-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.job-progress-pct {
+  color: #7eb8ff;
+  font-variant-numeric: tabular-nums;
+}
+
+.job-progress-track {
+  height: 8px;
+  background: #243044;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.job-progress-fill {
+  height: 100%;
+  background: #7eb8ff;
+  border-radius: 4px;
+  transition: width 0.35s ease;
+}
+
+.job-progress--completed .job-progress-fill {
+  background: #5cb87a;
+}
+
+.job-progress--failed .job-progress-fill {
+  background: #e07070;
+}
+
+.job-progress-fill.indeterminate {
+  width: 35%;
+  position: absolute;
+  left: 0;
+  animation: job-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes job-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+
+.job-progress-message {
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+  color: #8b9cb3;
+}
+
 .labeling {
   outline: none;
 }

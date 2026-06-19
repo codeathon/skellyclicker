@@ -60,3 +60,5 @@ class BackgroundJob(BaseModel):
 	status: JobStatus = JobStatus.pending
 	message: str = ""
 	log_lines: List[str] = Field(default_factory=list)
+	# None = indeterminate (e.g. long DLC train); 0.0–1.0 = determinate fraction.
+	progress_percent: float | None = None

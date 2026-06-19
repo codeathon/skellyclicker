@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppSession, client } from "./api/client";
+import { JobProgressBar, JobProgressState } from "./components/JobProgressBar";
 import { LabelingCanvas } from "./components/LabelingCanvas";
 import { LoadedAssets } from "./components/LoadedAssets";
 
@@ -28,27 +29,98 @@ function sessionLabel(session: AppSession): string {
 export default function App() {
   const [session, setSession] = useState<AppSession | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [jobLog, setJobLog] = useState<string[]>([]);
+  const [jobProgress, setJobProgress] = useState<JobProgressState | null>(null);
+  const watchedJobRef = useRef<string | null>(null);
+  const hideJobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
     setSession(await client.getSession());
   }, []);
 
+  const clearJobProgressLater = useCallback((delayMs = 2500) => {
+    if (hideJobTimerRef.current) clearTimeout(hideJobTimerRef.current);
+    hideJobTimerRef.current = setTimeout(() => {
+      setJobProgress(null);
+      watchedJobRef.current = null;
+    }, delayMs);
+  }, []);
+
   const watchJob = useCallback(
-    (jobId: string) => {
+    (jobId: string, jobName: string) => {
+      if (watchedJobRef.current === jobId) return;
+      watchedJobRef.current = jobId;
+
       const ws = new WebSocket(
         `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/jobs/${jobId}`,
       );
+
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
-        if (msg.type === "log") setJobLog((prev) => [...prev, msg.message]);
+        if (msg.type === "progress") {
+          setJobProgress({
+            jobId,
+            jobName,
+            percent: msg.percent ?? null,
+            message: msg.message ?? "",
+            status: "running",
+          });
+        }
         if (msg.type === "done") {
-          refresh();
+          const failed = msg.status === "failed";
+          setJobProgress({
+            jobId,
+            jobName,
+            percent: failed ? msg.percent ?? null : 1,
+            message: msg.message ?? (failed ? "Job failed" : "Complete"),
+            status: failed ? "failed" : "completed",
+          });
+          refresh().then(() => clearJobProgressLater(failed ? 5000 : 2500));
           ws.close();
         }
       };
+
+      ws.onerror = () => {
+        setJobProgress((prev) =>
+          prev
+            ? { ...prev, message: "Lost connection to job stream", status: "failed" }
+            : prev,
+        );
+      };
     },
-    [refresh],
+    [refresh, clearJobProgressLater],
+  );
+
+  const startJob = useCallback(
+    async (jobId: string, jobName: string) => {
+      if (hideJobTimerRef.current) clearTimeout(hideJobTimerRef.current);
+      setJobProgress({
+        jobId,
+        jobName,
+        percent: null,
+        message: "Starting…",
+        status: "running",
+      });
+      watchJob(jobId, jobName);
+      try {
+        const job = await client.getJob(jobId);
+        setJobProgress({
+          jobId,
+          jobName: job.name,
+          percent: job.progress_percent,
+          message: job.message || "Running…",
+          status:
+            job.status === "failed"
+              ? "failed"
+              : job.status === "completed"
+                ? "completed"
+                : "running",
+        });
+      } catch {
+        /* WS will drive updates */
+      }
+      await refresh();
+    },
+    [watchJob, refresh],
   );
 
   // Fresh in-memory session every time the app is opened (no Start New button).
@@ -58,6 +130,14 @@ export default function App() {
       .then(setSession)
       .catch((e) => setError(String(e)));
   }, []);
+
+  // Reattach to a running job after page reload.
+  useEffect(() => {
+    if (!session?.active_job_id) return;
+    const name =
+      session.workflow_state === "training" ? "Train Network" : "Analyze Videos";
+    startJob(session.active_job_id, name).catch((e) => setError(String(e)));
+  }, [session?.active_job_id, session?.workflow_state, startJob]);
 
   const run = async (fn: () => Promise<AppSession>) => {
     try {
@@ -89,9 +169,7 @@ export default function App() {
 
         <main>
           {error && <div className="error">{error}</div>}
-          {jobLog.length > 0 && (
-            <pre className="job-log">{jobLog.join("\n")}</pre>
-          )}
+          {jobProgress && <JobProgressBar progress={jobProgress} />}
 
           {labeling ? (
             <LabelingCanvas onClose={(updated) => setSession(updated)} />
@@ -175,9 +253,7 @@ export default function App() {
                   onClick={async () => {
                     try {
                       const { job_id } = await client.train();
-                      setJobLog([]);
-                      watchJob(job_id);
-                      await refresh();
+                      await startJob(job_id, "Train Network");
                     } catch (e) {
                       setError(e instanceof Error ? e.message : String(e));
                     }
@@ -200,9 +276,7 @@ export default function App() {
                         paths,
                         useTraining,
                       );
-                      setJobLog([]);
-                      watchJob(job_id);
-                      await refresh();
+                      await startJob(job_id, "Analyze Videos");
                     } catch (e) {
                       setError(e instanceof Error ? e.message : String(e));
                     }

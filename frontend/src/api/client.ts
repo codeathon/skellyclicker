@@ -48,6 +48,17 @@ export interface LabelingState {
   grid_height: number;
 }
 
+export type JobStatus = "pending" | "running" | "completed" | "failed";
+
+export interface BackgroundJob {
+  job_id: string;
+  name: string;
+  status: JobStatus;
+  message: string;
+  log_lines: string[];
+  progress_percent: number | null;
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -128,5 +139,6 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ video_paths, use_training_videos }),
     }),
+  getJob: (job_id: string) => api<BackgroundJob>(`/api/jobs/${job_id}`),
   frameUrl: (n: number) => `/api/labeling/frame/${n}?t=${Date.now()}`,
 };

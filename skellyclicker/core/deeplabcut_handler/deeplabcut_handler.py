@@ -2,6 +2,7 @@ from datetime import datetime
 import json
 import logging
 import math
+from collections.abc import Callable
 import cv2
 import deeplabcut
 from deeplabcut import DEBUG
@@ -124,7 +125,12 @@ class DeeplabcutHandler(BaseModel):
         labels_csv_path: str,
         video_paths: list[str],
         training_config: DeeplabcutTrainingConfig | None = None,
+        progress_callback: Callable[[float | None, str], None] | None = None,
     ):
+        def report(fraction: float | None, message: str) -> None:
+            if progress_callback:
+                progress_callback(fraction, message)
+
         if training_config is None:
             training_config = DeeplabcutTrainingConfig()
 
@@ -143,14 +149,14 @@ class DeeplabcutHandler(BaseModel):
             )
             self._bump_iteration()
 
-        logger.info("Processing labeled frames...")
+        report(0.05, "Processing labeled frames…")
         fill_in_labelled_data_folder(
             path_to_videos_for_training=str(video_folder),
             path_to_dlc_project_folder=str(parent_directory),
             path_to_image_labels_csv=labels_csv_path,
         )
 
-        logger.info(f"Creating training dataset with net type: {training_config.model_type}...")
+        report(0.15, f"Creating training dataset ({training_config.model_type})…")
         deeplabcut.create_training_dataset(self.project_config_path, net_type=training_config.model_type)
         # deeplabcut.create_training_model_comparison(self.project_config_path, net_types=["resnet_50", "rtmpose_x"])
 
@@ -170,6 +176,10 @@ class DeeplabcutHandler(BaseModel):
             pytorch_cfg_updates["data.train.hflip"] = True
         logger.info("Training model...")
         logger.info(f"With config: epochs={training_config.epochs}, save epochs={training_config.save_epochs}, batch_size={training_config.batch_size}, learning_rate={training_config.learning_rate}")
+        report(
+            None,
+            f"Training network ({training_config.epochs} epochs — this may take a while)…",
+        )
         start_time = perf_counter_ns()
         deeplabcut.train_network(
             self.project_config_path,
@@ -179,6 +189,7 @@ class DeeplabcutHandler(BaseModel):
             pytorch_cfg_updates=pytorch_cfg_updates
         )
         end_time = perf_counter_ns()
+        report(1.0, "Training finished")
         print(f"Model training took {(end_time-start_time)/1e9} seconds over {training_config.epochs} epochs ({(end_time-start_time)/(1e9*training_config.epochs)} s per epoch)")
 
     def analyze_videos(
@@ -187,11 +198,16 @@ class DeeplabcutHandler(BaseModel):
         output_folder: str | Path,
         annotate_videos: bool = False,
         filter_videos: bool = True,
+        progress_callback: Callable[[float | None, str], None] | None = None,
     ) -> str:
         from skellyclicker.services.dlc_paths import (
             dlc_project_dir,
             resolve_analyze_iteration,
         )
+
+        def report(fraction: float | None, message: str) -> None:
+            if progress_callback:
+                progress_callback(fraction, message)
 
         project_dir = dlc_project_dir(self.project_config_path)
         config = auxiliaryfunctions.read_config(self.project_config_path)
@@ -199,18 +215,38 @@ class DeeplabcutHandler(BaseModel):
         self.iteration = analyze_iteration
         Path(output_folder).mkdir(parents=True, exist_ok=True)
 
-        analyze_videos_dlc(
-            config=str(self.project_config_path),
-            videos=video_paths,
-            videotype=".mp4",
-            save_as_csv=True,
-            destfolder = str(output_folder),
-            batch_size=8,  # 16 is too high for 5 mocap videos
-            multiprocess=True,
-            overwrite=True
-        )
+        n_videos = max(len(video_paths), 1)
+        if progress_callback:
+            for i, video_path in enumerate(video_paths):
+                name = Path(video_path).name
+                report(
+                    0.05 + 0.70 * (i / n_videos),
+                    f"Analyzing video {i + 1}/{n_videos}: {name}",
+                )
+                analyze_videos_dlc(
+                    config=str(self.project_config_path),
+                    videos=[video_path],
+                    videotype=".mp4",
+                    save_as_csv=True,
+                    destfolder=str(output_folder),
+                    batch_size=8,
+                    multiprocess=False,
+                    overwrite=True,
+                )
+        else:
+            analyze_videos_dlc(
+                config=str(self.project_config_path),
+                videos=video_paths,
+                videotype=".mp4",
+                save_as_csv=True,
+                destfolder=str(output_folder),
+                batch_size=8,
+                multiprocess=True,
+                overwrite=True,
+            )
 
         if filter_videos:
+            report(0.78, "Filtering predictions…")
             deeplabcut.filterpredictions(
                 str(self.project_config_path),
                 video_paths,
@@ -220,6 +256,7 @@ class DeeplabcutHandler(BaseModel):
                 destfolder=str(output_folder),
             )
 
+        report(0.86, "Plotting trajectories…")
         deeplabcut.plot_trajectories(config=self.project_config_path, videos=video_paths, filtered=filter_videos, destfolder=str(output_folder))
 
         csv_path = Path(output_folder) / f"skellyclicker_machine_labels_iteration_{analyze_iteration}.csv"
@@ -247,6 +284,7 @@ class DeeplabcutHandler(BaseModel):
             json.dump(metadata, f, indent=2)
         print(f"Saved annotation metadata to {metadata_path}")
 
+        report(0.92, "Merging machine labels CSV…")
         self.merge_csvs_for_skellyclicker(
             csv_folder_path=str(output_folder),
             output_path=str(csv_path),
@@ -254,6 +292,7 @@ class DeeplabcutHandler(BaseModel):
         )
 
         if annotate_videos:
+            report(0.96, "Annotating videos…")
             self.annotate_videos(
                 output_path=str(output_folder),
                 csv_path=str(csv_path),

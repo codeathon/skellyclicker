@@ -229,6 +229,8 @@ def get_job(job_id: str):
 async def job_websocket(websocket: WebSocket, job_id: str):
 	await websocket.accept()
 	last_len = 0
+	last_progress: float | None = -1.0
+	last_message = ""
 	try:
 		while True:
 			job = store.job_runner.get_job(job_id)
@@ -236,8 +238,27 @@ async def job_websocket(websocket: WebSocket, job_id: str):
 				for line in job.log_lines[last_len:]:
 					await websocket.send_json({"type": "log", "message": line})
 				last_len = len(job.log_lines)
+			if job and (
+				job.progress_percent != last_progress or job.message != last_message
+			):
+				await websocket.send_json(
+					{
+						"type": "progress",
+						"percent": job.progress_percent,
+						"message": job.message,
+					}
+				)
+				last_progress = job.progress_percent
+				last_message = job.message
 			if job and job.status.value in ("completed", "failed"):
-				await websocket.send_json({"type": "done", "status": job.status.value})
+				await websocket.send_json(
+					{
+						"type": "done",
+						"status": job.status.value,
+						"percent": job.progress_percent,
+						"message": job.message,
+					}
+				)
 				break
 			await asyncio.sleep(0.5)
 	except WebSocketDisconnect:

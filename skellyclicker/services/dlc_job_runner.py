@@ -1,8 +1,11 @@
 """Background DLC train/analyze jobs with WebSocket-friendly status updates."""
 
 import threading
+from collections.abc import Callable
 
 from skellyclicker.services.models import BackgroundJob, JobStatus, WorkflowState
+
+ProgressCallback = Callable[[float | None, str], None]
 
 
 class DLCJobRunner:
@@ -14,6 +17,18 @@ class DLCJobRunner:
 	def _append_log(self, job: BackgroundJob, line: str) -> None:
 		job.log_lines.append(line)
 		job.message = line
+
+	def _set_progress(
+		self,
+		job: BackgroundJob,
+		fraction: float | None,
+		message: str,
+	) -> None:
+		"""Update job progress for WebSocket clients; None = indeterminate bar."""
+		job.progress_percent = fraction
+		job.message = message
+		if not job.log_lines or job.log_lines[-1] != message:
+			job.log_lines.append(message)
 
 	def start_train(self) -> BackgroundJob:
 		from skellyclicker.core.deeplabcut_handler.create_deeplabcut.deelabcut_project_config import (
@@ -50,18 +65,27 @@ class DLCJobRunner:
 		def worker() -> None:
 			try:
 				job.status = JobStatus.running
-				self._append_log(job, "Training started")
+				self._set_progress(job, None, "Training started…")
+
+				def on_train_progress(fraction: float | None, message: str) -> None:
+					self._set_progress(job, fraction, message)
+
 				handler.train_model(
 					labels_csv_path=csv_path,
 					video_paths=videos,
 					training_config=config,
+					progress_callback=on_train_progress,
 				)
 				session.dlc_iteration = handler.iteration
 				job.status = JobStatus.completed
-				self._append_log(job, f"Training complete (iteration {handler.iteration})")
+				self._set_progress(
+					job,
+					1.0,
+					f"Training complete (iteration {handler.iteration})",
+				)
 			except Exception as exc:
 				job.status = JobStatus.failed
-				self._append_log(job, str(exc))
+				self._set_progress(job, None, str(exc))
 			finally:
 				session.active_job_id = None
 				session.workflow_state = WorkflowState.ready_to_analyze
@@ -100,15 +124,16 @@ class DLCJobRunner:
 				)
 
 				job.status = JobStatus.running
-				self._append_log(job, "Analysis started")
+				self._set_progress(job, 0.0, "Analysis started…")
 				project_dir = dlc_project_dir(handler.project_config_path)
 				cfg = auxiliaryfunctions.read_config(handler.project_config_path)
 				analyze_iter = resolve_analyze_iteration(project_dir, cfg)
 				handler.iteration = analyze_iter
 				session.dlc_iteration = analyze_iter
 				if analyze_iter != int(cfg["iteration"]):
-					self._append_log(
+					self._set_progress(
 						job,
+						0.02,
 						f"Using iteration-{analyze_iter} (config.yaml says {cfg['iteration']})",
 					)
 				output_folder = analyze_output_folder(
@@ -117,21 +142,26 @@ class DLCJobRunner:
 					video_paths,
 					iteration=analyze_iter,
 				)
-				self._append_log(job, f"Output folder: {output_folder}")
+				self._set_progress(job, 0.04, f"Output folder: {output_folder}")
+
+				def on_analyze_progress(fraction: float | None, message: str) -> None:
+					self._set_progress(job, fraction, message)
+
 				machine_path = handler.analyze_videos(
 					video_paths=video_paths,
 					annotate_videos=session.annotate_videos,
 					filter_videos=session.filter_predictions,
 					output_folder=output_folder,
+					progress_callback=on_analyze_progress,
 				)
 				if use_training_videos:
 					session.machine_labels_path = machine_path
 					session.workflow_state = WorkflowState.review
 				job.status = JobStatus.completed
-				self._append_log(job, f"Analysis complete: {machine_path}")
+				self._set_progress(job, 1.0, f"Analysis complete: {machine_path}")
 			except Exception as exc:
 				job.status = JobStatus.failed
-				self._append_log(job, str(exc))
+				self._set_progress(job, None, str(exc))
 			finally:
 				session.active_job_id = None
 				if session.workflow_state == WorkflowState.analyzing:
