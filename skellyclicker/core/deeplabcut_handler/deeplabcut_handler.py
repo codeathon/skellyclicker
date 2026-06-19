@@ -25,6 +25,10 @@ from skellyclicker.core.deeplabcut_handler.create_deeplabcut.deelabcut_project_c
     DeeplabcutTrainingConfig,
 )
 from skellyclicker.core.deeplabcut_handler.analyze_videos_dlc import analyze_videos_dlc
+from skellyclicker.core.deeplabcut_handler.dlc_csv_io import (
+	dlc_analysis_csv_to_skellyclicker,
+	iter_dlc_video_csvs,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -306,53 +310,25 @@ class DeeplabcutHandler(BaseModel):
     def merge_csvs_for_skellyclicker(
         self, csv_folder_path: str | Path, output_path: str | Path, filtered: bool = False
     ):
-        dataframe_list = []
         csv_folder_path = Path(csv_folder_path)
-        if filtered:
-            csv_paths = csv_folder_path.glob("*_filtered.csv")
-        else:
-            csv_paths = set(csv_folder_path.glob("*.csv")).difference(set(csv_folder_path.glob("*_filtered.csv")))
+        csv_paths = iter_dlc_video_csvs(csv_folder_path, filtered=filtered)
         if not csv_paths:
             raise FileNotFoundError(
                 f"No matching CSV files found in {csv_folder_path}. Please check the path."
             )
-        csv_paths = set(csv_paths).difference(set(csv_folder_path.glob(".csv")))
-        csv_paths = sorted(list(csv_paths))
+
+        dataframe_list = []
         for csv in csv_paths:
-            df = pd.read_csv(csv)
-
             video_name = Path(csv).name.split("DLC_")[0]
-
-            bodyparts = df.iloc[0, :].unique()[1:]
-
-            column_names = ["frame"]
-            for bodypart in bodyparts:
-                column_names.extend(
-                    [f"{bodypart}_x", f"{bodypart}_y", f"{bodypart}_likelihood"]
-                )
-
-            df.columns = column_names
-
-            # remove first two rows
-            df = df.iloc[2:, :]
-            # TODO: consider filtering for confidence
-
-            df = df.drop(columns=[f"{bodypart}_likelihood" for bodypart in bodyparts])
-
-            df["video"] = video_name
-
-            # set frames and video as multi index
-            df = df.set_index(["video", "frame"])
-
-            print(df.head())
-
-            dataframe_list.append(df)
+            if not video_name.endswith((".mp4", ".avi")):
+                video_name = f"{video_name}.mp4"
+            dataframe_list.append(
+                dlc_analysis_csv_to_skellyclicker(csv, video_name=video_name)
+            )
 
         df = pd.concat(dataframe_list)
-        print(df)
-
         df.to_csv(output_path)
-        print(f"Saved skellyclicker compatible CSV to {output_path}")
+        logger.info("Saved skellyclicker compatible CSV to %s", output_path)
 
     def annotate_videos(self, output_path: str | Path, video_paths: list[Path], csv_path: str | Path):
         print(
