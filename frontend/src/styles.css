@@ -220,3 +220,21 @@ button:disabled {
   border: 1px solid #2a3441;
   border-radius: 4px;
 }
+
+.frame-scrubber {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.frame-scrubber label {
+  font-size: 0.85rem;
+  color: #8b9cb3;
+}
+
+.frame-scrubber input[type="range"] {
+  width: 100%;
+  accent-color: #7eb8ff;
+  cursor: pointer;
+}

@@ -8,14 +8,17 @@ interface Props {
 export function LabelingCanvas({ onClose }: Props) {
 	const [state, setState] = useState<LabelingState | null>(null);
 	const [imgSrc, setImgSrc] = useState("");
+	const [sliderFrame, setSliderFrame] = useState(0);
 	const [error, setError] = useState<string | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
+	const sliderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const loadFrame = useCallback(async (frameNumber: number) => {
 		const s = await client.setFrame(frameNumber);
 		frameRef.current = s.frame_number;
+		setSliderFrame(s.frame_number);
 		setState(s);
 		setImgSrc(client.frameUrl(s.frame_number));
 	}, []);
@@ -122,6 +125,20 @@ export function LabelingCanvas({ onClose }: Props) {
 		}
 	};
 
+	/** Scrub bar — debounced so dragging does not spam JPEG encodes on the server. */
+	const onSliderInput = (frameNumber: number) => {
+		setSliderFrame(frameNumber);
+		if (sliderDebounceRef.current) clearTimeout(sliderDebounceRef.current);
+		sliderDebounceRef.current = setTimeout(() => {
+			loadFrame(frameNumber).catch((err) => setError(String(err)));
+		}, 120);
+	};
+
+	const onSliderCommit = (frameNumber: number) => {
+		if (sliderDebounceRef.current) clearTimeout(sliderDebounceRef.current);
+		loadFrame(frameNumber).catch((err) => setError(String(err)));
+	};
+
 	if (!state) return <p>Loading labeler…</p>;
 
 	return (
@@ -170,6 +187,22 @@ export function LabelingCanvas({ onClose }: Props) {
 			{error && <div className="error">{error}</div>}
 			<img id="label-img" src={imgSrc} alt="" hidden onLoad={onImageLoad} />
 			<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
+			<div className="frame-scrubber">
+				<label htmlFor="frame-slider">
+					Frame {state.frame_number + 1} / {state.frame_count}
+				</label>
+				<input
+					id="frame-slider"
+					type="range"
+					min={0}
+					max={Math.max(0, state.frame_count - 1)}
+					value={sliderFrame}
+					onInput={(e) => onSliderInput(Number(e.currentTarget.value))}
+					onChange={(e) => onSliderInput(Number(e.target.value))}
+					onMouseUp={(e) => onSliderCommit(Number(e.currentTarget.value))}
+					onTouchEnd={(e) => onSliderCommit(Number(e.currentTarget.value))}
+				/>
+			</div>
 		</div>
 	);
 }
