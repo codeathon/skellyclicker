@@ -78,6 +78,24 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function dialogApi(body: object, path: string): Promise<{ paths: string[] }> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 503) {
+    throw new Error("DIALOG_UNAVAILABLE");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(
+      typeof err.detail === "string" ? err.detail : res.statusText,
+    );
+  }
+  return res.json();
+}
+
 export const client = {
   getSession: () => api<AppSession>("/api/session"),
   newSession: () => api<AppSession>("/api/session/new", { method: "POST" }),
@@ -155,6 +173,17 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ video_paths, use_training_videos }),
     }),
+  dialogOpenFile: (title: string, extensions: string[]) =>
+    dialogApi({ title, extensions }, "/api/dialog/open-file"),
+  dialogOpenFiles: (title: string, extensions: string[]) =>
+    dialogApi({ title, extensions }, "/api/dialog/open-files"),
+  dialogOpenDirectory: (title: string) =>
+    dialogApi({ title, extensions: [] }, "/api/dialog/open-directory"),
+  dialogSaveFile: (title: string, extensions: string[], default_name = "") =>
+    dialogApi(
+      { title, extensions, default_name },
+      "/api/dialog/save-file",
+    ),
   getJob: (job_id: string) => api<BackgroundJob>(`/api/jobs/${job_id}`),
   frameUrl: (n: number) => `/api/labeling/frame/${n}?t=${Date.now()}`,
 };

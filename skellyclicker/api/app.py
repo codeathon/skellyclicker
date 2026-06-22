@@ -71,6 +71,68 @@ class ToggleBody(BaseModel):
 	enabled: bool
 
 
+class DialogBody(BaseModel):
+	title: str = "Select"
+	extensions: list[str] = []
+
+
+class SaveDialogBody(BaseModel):
+	title: str = "Save"
+	extensions: list[str] = []
+	default_name: str = ""
+
+
+def _dialog_http(handler, body: DialogBody):
+	from skellyclicker.services.native_dialog import DialogCancelled, DialogUnavailable
+
+	try:
+		return handler()
+	except DialogCancelled:
+		return {"paths": []}
+	except DialogUnavailable as exc:
+		raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/dialog/open-file")
+def dialog_open_file(body: DialogBody):
+	from skellyclicker.services.native_dialog import pick_file
+
+	def run():
+		return {"paths": [pick_file(body.title, body.extensions or ["*"])]}
+
+	return _dialog_http(run, body)
+
+
+@app.post("/api/dialog/open-files")
+def dialog_open_files(body: DialogBody):
+	from skellyclicker.services.native_dialog import pick_files
+
+	def run():
+		return {"paths": pick_files(body.title, body.extensions or ["*"])}
+
+	return _dialog_http(run, body)
+
+
+@app.post("/api/dialog/open-directory")
+def dialog_open_directory(body: DialogBody):
+	from skellyclicker.services.native_dialog import pick_directory
+
+	def run():
+		return {"paths": [pick_directory(body.title)]}
+
+	return _dialog_http(run, body)
+
+
+@app.post("/api/dialog/save-file")
+def dialog_save_file(body: SaveDialogBody):
+	from skellyclicker.services.native_dialog import save_file
+
+	def run():
+		return {"paths": [save_file(body.title, body.extensions or ["*"], body.default_name)]}
+
+	return _dialog_http(run, body)
+
+
 @app.get("/api/session", response_model=AppSession)
 def get_session() -> AppSession:
 	return store.get_session()

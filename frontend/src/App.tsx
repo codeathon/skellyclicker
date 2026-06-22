@@ -1,26 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppSession, client } from "./api/client";
+import { pathDialog } from "./api/pathDialog";
 import { JobProgressBar, JobProgressState } from "./components/JobProgressBar";
 import { LabelingCanvas } from "./components/LabelingCanvas";
 import { LoadedAssets } from "./components/LoadedAssets";
 
-function promptPath(label: string, defaultValue = ""): string | null {
+function promptText(label: string, defaultValue = ""): string | null {
   const v = window.prompt(label, defaultValue);
   return v?.trim() || null;
-}
-
-function promptPaths(label: string, existing: string[] = []): string[] | null {
-  const hint =
-    "Enter one path per line, or comma-separated.\n" +
-    (existing.length
-      ? `\nCurrently loaded (${existing.length}):\n${existing.map((p) => `• ${p}`).join("\n")}\n`
-      : "");
-  const v = window.prompt(label + hint);
-  if (!v?.trim()) return null;
-  return v
-    .split(/[\n,]+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
 }
 
 function parseBodyparts(raw: string): string[] {
@@ -209,10 +196,11 @@ export default function App() {
                   </p>
                 )}
                 <button
-                  onClick={() => {
-                    const paths = promptPaths(
-                      "Replace all videos with:",
-                      session.videos ?? [],
+                  onClick={async () => {
+                    const paths = await pathDialog.openVideos(
+                      session.videos?.length
+                        ? "Replace all videos with"
+                        : "Select videos",
                     );
                     if (paths) run(() => client.setVideos(paths));
                   }}
@@ -221,10 +209,9 @@ export default function App() {
                 </button>
                 {session.videos?.length ? (
                   <button
-                    onClick={() => {
-                      const paths = promptPaths(
-                        "Add videos to the current list:",
-                        session.videos ?? [],
+                    onClick={async () => {
+                      const paths = await pathDialog.openVideos(
+                        "Add videos to the current list",
                       );
                       if (paths) run(() => client.addVideos(paths));
                     }}
@@ -237,13 +224,16 @@ export default function App() {
               <div className="action-group">
                 <h3>DeepLabCut</h3>
                 <button
-                  onClick={() => {
-                    const parent = promptPath("Parent directory for new project");
-                    const name = promptPath("Project name");
-                    if (!parent || !name) return;
+                  onClick={async () => {
+                    const parent = await pathDialog.openDirectory(
+                      "Parent directory for new DLC project",
+                    );
+                    if (!parent) return;
+                    const name = promptText("Project name");
+                    if (!name) return;
                     let bodyparts = session.tracked_point_names;
                     if (!bodyparts.length) {
-                      const raw = promptPath(
+                      const raw = promptText(
                         "Bodyparts (comma-separated, e.g. nose,left_eye,right_eye)",
                       );
                       if (!raw) return;
@@ -256,8 +246,10 @@ export default function App() {
                   Create DLC Project
                 </button>
                 <button
-                  onClick={() => {
-                    const p = promptPath("DLC project directory");
+                  onClick={async () => {
+                    const p = await pathDialog.openDirectory(
+                      "DLC project directory",
+                    );
                     if (p) run(() => client.loadDlc(p));
                   }}
                 >
@@ -272,16 +264,16 @@ export default function App() {
                   bodyparts from your DLC project.
                 </p>
                 <button
-                  onClick={() => {
-                    const p = promptPath("Human labels CSV");
+                  onClick={async () => {
+                    const p = await pathDialog.openCsv("Human labels CSV");
                     if (p) run(() => client.setHumanLabels(p));
                   }}
                 >
                   Import Human Labels
                 </button>
                 <button
-                  onClick={() => {
-                    const p = promptPath("Machine labels CSV");
+                  onClick={async () => {
+                    const p = await pathDialog.openCsv("Machine labels CSV");
                     if (p) run(() => client.setMachineLabels(p));
                   }}
                 >
@@ -349,22 +341,20 @@ export default function App() {
 
               <div className="session-actions">
                 <button
-                  onClick={() => {
-                    const p = promptPath(
-                      "Full path for session .json (creates new file).\n" +
-                        "Tip: first_test_session.json → ~/skellyclicker_sessions/",
-                      session.session_saved_path ?? "",
-                    );
+                  onClick={async () => {
+                    const defaultName = session.session_saved_path
+                      ? session.session_saved_path.split(/[/\\]/).pop() ??
+                        "session.json"
+                      : "session.json";
+                    const p = await pathDialog.saveSessionJson(defaultName);
                     if (p) run(() => client.saveSession(p));
                   }}
                 >
                   Save Session
                 </button>
                 <button
-                  onClick={() => {
-                    const p = promptPath(
-                      "Full path to existing session .json (must already exist)",
-                    );
+                  onClick={async () => {
+                    const p = await pathDialog.openSessionJson();
                     if (p) run(() => client.loadSession(p));
                   }}
                 >

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppSession, client, LabelingState } from "../api/client";
+import { pathDialog } from "../api/pathDialog";
 
 interface Props {
 	onClose: (session: AppSession) => void;
@@ -51,12 +52,9 @@ export function LabelingCanvas({ onClose }: Props) {
 				setError(null);
 				let savePath: string | undefined;
 				if (save) {
-					const v = window.prompt(
-						"Save human labels CSV (full path).\n" +
-							"Leave empty for <video folder>/skellyclicker_data/",
-					);
-					if (v === null) return;
-					savePath = v.trim() || undefined;
+					const picked = await pathDialog.saveCsv("Save human labels CSV");
+					if (!picked) return;
+					savePath = picked;
 				}
 				const session = await client.closeLabeler(save, savePath);
 				onClose(session);
