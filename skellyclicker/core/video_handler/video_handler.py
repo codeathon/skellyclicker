@@ -437,7 +437,8 @@ class VideoHandler(BaseModel):
 
     def _save_data(self, save_pathstring: str | None = None) -> str:
         if save_pathstring is None:
-            save_path = Path(self.video_folder).parent / "skellyclicker_data"
+            # Default next to the loaded videos so labels are easy to find.
+            save_path = Path(self.video_folder) / "skellyclicker_data"
             save_path.mkdir(exist_ok=True, parents=True)
         else:
             save_path = Path(save_pathstring)

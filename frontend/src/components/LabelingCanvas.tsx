@@ -49,7 +49,16 @@ export function LabelingCanvas({ onClose }: Props) {
 		async (save: boolean) => {
 			try {
 				setError(null);
-				const session = await client.closeLabeler(save);
+				let savePath: string | undefined;
+				if (save) {
+					const v = window.prompt(
+						"Save human labels CSV (full path).\n" +
+							"Leave empty for <video folder>/skellyclicker_data/",
+					);
+					if (v === null) return;
+					savePath = v.trim() || undefined;
+				}
+				const session = await client.closeLabeler(save, savePath);
 				onClose(session);
 			} catch (e) {
 				setError(e instanceof Error ? e.message : String(e));

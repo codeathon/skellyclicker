@@ -166,16 +166,27 @@ class SessionStore:
 		labeled_count = len(engine.video_handler.data_handler.get_nonempty_frames())
 		path = engine.close(save=save, save_path=save_path)
 		if self.session.labeling_session_id != labeling_id:
+			if save and path:
+				raise SessionError(
+					f"Labels were saved to {path} but the session changed. "
+					"Use Import Human Labels with that path."
+				)
 			return self.session
-		if save and path:
+		if save:
+			if not path:
+				raise SessionError(
+					"Could not save labels to CSV. Try closing the labeler again."
+				)
 			if self.session.train_on_machine_labels:
 				self.session.machine_labels_path = path
 			else:
 				self.session.human_labels_path = path
+			self.session.status_message = f"Labels saved to {path}"
+		else:
+			self.session.status_message = "Labeling closed without saving"
 		self.labeling_engine = None
 		self.session.labeling_session_id = None
 		self.session.labeled_frame_count = labeled_count
-		self.session.status_message = "Labels saved" if save else "Labeling closed"
 		return refresh_workflow_state(self.session)
 
 	def _sync_dlc_iteration_from_handler(self) -> None:

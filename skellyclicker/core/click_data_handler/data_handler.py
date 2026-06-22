@@ -194,7 +194,7 @@ class DataHandler(BaseModel):
         return click_data
 
     def get_nonempty_frames(self) -> list[int]:
-        mask = self.dataframe.iloc[:, 2:].notna().any(axis=1)
+        mask = self.dataframe.notna().any(axis=1)
         nonempty_dataframe = self.dataframe[mask]
         nonempty_frames = nonempty_dataframe.index.get_level_values("frame").unique()
         return sorted(nonempty_frames.tolist())
