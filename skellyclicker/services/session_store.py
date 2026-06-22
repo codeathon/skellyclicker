@@ -163,7 +163,15 @@ class SessionStore:
 			raise SessionError("Labeler is not open")
 		engine = self.labeling_engine
 		labeling_id = engine.session_id
-		labeled_count = len(engine.video_handler.data_handler.get_nonempty_frames())
+		handler = engine.video_handler.data_handler
+		tracked_names = list(handler.config.tracked_point_names)
+		mask = handler.dataframe.notna().any(axis=1)
+		if mask.any():
+			labeled_count = int(
+				handler.dataframe.index[mask].get_level_values("frame").nunique()
+			)
+		else:
+			labeled_count = 0
 		path = engine.close(save=save, save_path=save_path)
 		if self.session.labeling_session_id != labeling_id:
 			if save and path:
@@ -178,13 +186,8 @@ class SessionStore:
 					"Could not save labels to CSV. Try closing the labeler again."
 				)
 			# Labeler output is always human labels (legacy UI: csv_saved_path).
-			import pandas as pd
-
-			df = pd.read_csv(path)
 			self.session.human_labels_path = path
-			self.session.tracked_point_names = bodypart_names_from_csv_columns(
-				list(df.columns),
-			)
+			self.session.tracked_point_names = tracked_names
 			self.session.status_message = f"Labels saved to {path}"
 		else:
 			self.session.status_message = "Labeling closed without saving"

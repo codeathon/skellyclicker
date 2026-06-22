@@ -179,7 +179,10 @@ export default function App() {
           {jobProgress && <JobProgressBar progress={jobProgress} />}
 
           {labeling ? (
-            <LabelingCanvas onClose={(updated) => setSession(updated)} />
+            <LabelingCanvas
+              humanLabelsPath={session.human_labels_path}
+              onClose={(updated) => setSession(updated)}
+            />
           ) : (
             <section className="panel actions">
               <div className="action-group">

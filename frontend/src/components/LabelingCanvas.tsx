@@ -3,10 +3,11 @@ import { AppSession, client, LabelingState } from "../api/client";
 import { pathDialog } from "../api/pathDialog";
 
 interface Props {
+	humanLabelsPath: string | null;
 	onClose: (session: AppSession) => void;
 }
 
-export function LabelingCanvas({ onClose }: Props) {
+export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	const [state, setState] = useState<LabelingState | null>(null);
 	const [imgSrc, setImgSrc] = useState("");
 	const [sliderFrame, setSliderFrame] = useState(0);
@@ -57,9 +58,14 @@ export function LabelingCanvas({ onClose }: Props) {
 			try {
 				let savePath: string | undefined;
 				if (save) {
-					const picked = await pathDialog.saveCsvForLabeler();
-					// Cancelled save dialog → default path under the video folder on the server.
-					savePath = picked ?? undefined;
+					// Re-save to the same CSV when updating labels — skips a slow file dialog round-trip.
+					if (humanLabelsPath) {
+						savePath = humanLabelsPath;
+					} else {
+						const picked = await pathDialog.saveCsvForLabeler();
+						// Cancelled save dialog → default path under the video folder on the server.
+						savePath = picked ?? undefined;
+					}
 				}
 				const session = await client.closeLabeler(save, savePath);
 				onClose(session);
@@ -69,7 +75,7 @@ export function LabelingCanvas({ onClose }: Props) {
 				setError(e instanceof Error ? e.message : String(e));
 			}
 		},
-		[onClose],
+		[humanLabelsPath, onClose],
 	);
 
 	useEffect(() => {

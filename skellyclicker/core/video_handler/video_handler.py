@@ -411,16 +411,14 @@ class VideoHandler(BaseModel):
     ) -> str | None:
         """Clean up resources."""
         logger.info("VideoHandler closing")
-        for video in self.videos.values():
-            video.cap.release()
-
+        saved_path: str | None = None
         if save_data is True:
-            save_path = self._save_data(save_pathstring=save_path)
+            saved_path = self._save_data(save_pathstring=save_path)
         elif save_data is None:
             while True:
                 save_data_input = input("Save data? (yes/no): ")
                 if save_data_input.lower() == "yes" or save_data_input.lower() == "y":
-                    save_path = self._save_data(save_pathstring=save_path)
+                    saved_path = self._save_data(save_pathstring=save_path)
                     break
                 else:
                     confirmation = input(
@@ -428,12 +426,12 @@ class VideoHandler(BaseModel):
                     )
                     if confirmation == "no" or confirmation == "n":
                         logger.info("Data not saved.")
-                        save_path = None
+                        saved_path = None
                         break
-        else:
-            save_path = None
+        for video in self.videos.values():
+            video.cap.release()
 
-        return save_path
+        return saved_path
 
     def _save_data(self, save_pathstring: str | None = None) -> str:
         if save_pathstring is None:

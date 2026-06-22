@@ -200,8 +200,11 @@ class DataHandler(BaseModel):
         return sorted(nonempty_frames.tolist())
 
     def save_csv(self, output_path: str | Path):
-        self.dataframe.to_csv(output_path)
-        logger.info(f"Saved csv data to {output_path}")
+        # Only rows with at least one click — full grid can be 100k+ NaN rows per video.
+        mask = self.dataframe.notna().any(axis=1)
+        labeled = self.dataframe.loc[mask].reset_index()
+        labeled.to_csv(output_path, index=False)
+        logger.info(f"Saved {len(labeled)} labeled row(s) to {output_path}")
 
     def save_parquet(self, output_path: str | Path):
         # TODO: Add some useful metadata here?
