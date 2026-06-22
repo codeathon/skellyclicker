@@ -1,9 +1,21 @@
 """Launch SkellyClicker web server: python -m skellyclicker.api"""
 
+import sys
 import webbrowser
 from threading import Timer
 
-import uvicorn
+try:
+	import uvicorn
+except ModuleNotFoundError:
+	sys.exit(
+		"Missing Python dependencies (uvicorn).\n\n"
+		"Activate the skellyclicker environment, then install the package:\n"
+		"  conda activate skellyclicker\n"
+		"  pip install -e .\n\n"
+		"Or with a venv:\n"
+		"  python -m venv .venv && source .venv/bin/activate\n"
+		"  pip install -e .\n"
+	)
 
 from skellyclicker.api.app import app
 

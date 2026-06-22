@@ -12,30 +12,55 @@ For labelling and training data through DeepLabCut.
 
     - `cd skellyclicker`
 
-3. Create a new conda environment from the environment yaml
-
-    - `conda env create -f skellyclicker_env.yaml`
-
-4. **Ubuntu only:** install tkinter for native file dialogs (used by the web UI and legacy GUI):
+3. Create and activate the conda environment:
 
     ```bash
-    sudo apt install python3-tk
+    conda env create -f skellyclicker_env.yaml
+    conda activate skellyclicker
     ```
 
-    SkellyClicker must run on a machine with a graphical desktop session (`DISPLAY` or
-    `WAYLAND_DISPLAY` set). Dialogs open on the Ubuntu box where the API runs, not inside
-    the browser. Headless SSH without X11 forwarding falls back to typing paths manually.
+4. Install the package (pulls in `uvicorn`, `fastapi`, `deeplabcut`, etc.):
+
+    ```bash
+    pip install -e .
+    ```
+
+5. **Ubuntu only:** install native file dialogs (web UI and legacy GUI):
+
+    ```bash
+    sudo apt install zenity python3-tk
+    ```
+
+    `zenity` is the primary file browser on Ubuntu. SkellyClicker must run on a machine
+    with a graphical desktop session (`DISPLAY` or `WAYLAND_DISPLAY` set). Dialogs open
+    on the Ubuntu box where the API runs. If server dialogs are unavailable, the web UI
+    falls back to the **browser's file picker** (files are uploaded to the server).
+
+### Troubleshooting
+
+**`ModuleNotFoundError: No module named 'uvicorn'`** (or `pandas`, `fastapi`, etc.)
+
+You are using a Python that does not have SkellyClicker installed. Fix:
+
+```bash
+conda activate skellyclicker   # must be active every new terminal
+cd /path/to/skellyclicker
+pip install -e .
+python -m skellyclicker.api
+```
+
+Confirm the right interpreter: `which python` should point inside your conda env
+(e.g. `.../envs/skellyclicker/bin/python`).
 
 ## How To Use
 
 ### Web UI (recommended)
 
-1. Activate the environment.
+1. Activate the environment and ensure dependencies are installed (see **Installation** above).
 
-2. Install Python dependencies and build the frontend:
+2. Build the frontend (once, or after UI changes):
 
     ```bash
-    pip install -e .
     cd frontend && npm install && npm run build && cd ..
     ```
 
@@ -47,9 +72,8 @@ For labelling and training data through DeepLabCut.
 
 4. Follow the workflow: **Videos → DeepLabCut → Labels → Train & Analyze → Session**.
 
-   File pickers use native Ubuntu dialogs via tkinter (absolute paths on the server filesystem).
-   If dialogs are unavailable at startup, the server logs a warning and the UI falls back to
-   manual path entry.
+   File pickers use native Ubuntu dialogs via zenity (or the browser file picker as fallback).
+   If dialogs are unavailable at startup, the server logs a warning.
 
 ### Legacy Tk UI
 

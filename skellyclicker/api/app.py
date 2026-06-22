@@ -5,7 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -98,7 +98,7 @@ class SaveDialogBody(BaseModel):
 
 
 def _dialog_http(handler, body: DialogBody):
-	from skellyclicker.services.native_dialog import DialogCancelled, DialogUnavailable
+	from skellyclicker.services.dialog_errors import DialogCancelled, DialogUnavailable
 
 	try:
 		return handler()
@@ -154,6 +154,22 @@ def dialog_status():
 
 	available, detail = check_dialog_availability()
 	return {"available": available, "detail": detail}
+
+
+@app.post("/api/upload/files")
+async def upload_files(files: list[UploadFile] = File(...)):
+	"""Store browser-selected files on the server; return absolute paths."""
+	from skellyclicker.services.upload_store import save_upload
+
+	if not files:
+		raise HTTPException(status_code=400, detail="No files uploaded")
+
+	session = store.get_session()
+	paths: list[str] = []
+	for upload in files:
+		content = await upload.read()
+		paths.append(save_upload(session.session_id, upload.filename or "upload", content))
+	return {"paths": paths}
 
 
 @app.get("/api/session", response_model=AppSession)

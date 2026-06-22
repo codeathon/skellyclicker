@@ -26,7 +26,7 @@ def test_dialog_startup_warning_when_unavailable():
 	):
 		msg = dialog_startup_warning()
 		assert msg is not None
-		assert "fall back" in msg
+		assert "browser file picker" in msg
 		assert "no tkinter" in msg
 
 
@@ -36,6 +36,18 @@ def test_linux_without_display_is_unavailable():
 			available, detail = check_dialog_availability()
 	assert available is False
 	assert "DISPLAY" in detail
+
+
+def test_linux_with_zenity_is_available():
+	with patch.object(sys, "platform", "linux"):
+		with patch.dict("os.environ", {"DISPLAY": ":0"}, clear=True):
+			with patch(
+				"skellyclicker.services.zenity_dialog.zenity_available",
+				return_value=True,
+			):
+				available, detail = check_dialog_availability()
+	assert available is True
+	assert "zenity" in detail
 
 
 def test_import_error_reports_ubuntu_hint():

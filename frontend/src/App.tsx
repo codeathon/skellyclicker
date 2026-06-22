@@ -247,8 +247,8 @@ export default function App() {
                 </button>
                 <button
                   onClick={async () => {
-                    const p = await pathDialog.openDirectory(
-                      "DLC project directory",
+                    const p = await pathDialog.openDlcProject(
+                      "DLC project folder",
                     );
                     if (p) run(() => client.loadDlc(p));
                   }}

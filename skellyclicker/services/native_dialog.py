@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
 from pathlib import Path
+
+from skellyclicker.services.dialog_errors import DialogCancelled, DialogUnavailable
 
 # One dialog at a time — concurrent picks confuse the window server.
 _dialog_lock = threading.Lock()
@@ -14,19 +17,8 @@ _dialog_lock = threading.Lock()
 _RUNNER = Path(__file__).with_name("tk_dialog_runner.py")
 
 
-class DialogCancelled(Exception):
-	"""User closed the file dialog without selecting."""
-
-
-class DialogUnavailable(Exception):
-	"""No display / tkinter available for native dialogs."""
-
-
 def check_dialog_availability() -> tuple[bool, str]:
-	"""Probe whether tkinter can open GUI dialogs (no dialog is shown)."""
-	import os
-	import sys
-
+	"""Probe whether a native picker can open (zenity on Linux, else tkinter)."""
 	if sys.platform.startswith("linux"):
 		has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 		if not has_display:
@@ -36,13 +28,17 @@ def check_dialog_availability() -> tuple[bool, str]:
 				"(local Ubuntu desktop or SSH with X11 forwarding).",
 			)
 
+		from skellyclicker.services.zenity_dialog import zenity_available
+
+		if zenity_available():
+			return True, "Native file dialogs are available (zenity)."
+
 	try:
 		import tkinter as tk
 	except ImportError:
 		return (
 			False,
-			"tkinter is not installed — on Ubuntu run: sudo apt install python3-tk "
-			"(conda: conda install -c conda-forge tk).",
+			"Install dialog support on Ubuntu: sudo apt install zenity python3-tk",
 		)
 
 	try:
@@ -53,7 +49,7 @@ def check_dialog_availability() -> tuple[bool, str]:
 	except tk.TclError as exc:
 		return False, f"tkinter cannot connect to a display: {exc}"
 
-	return True, "Native file dialogs are available."
+	return True, "Native file dialogs are available (tkinter)."
 
 
 def dialog_startup_warning() -> str | None:
@@ -62,13 +58,13 @@ def dialog_startup_warning() -> str | None:
 	if available:
 		return None
 	return (
-		"SkellyClicker file dialogs are unavailable. "
-		"The web UI will fall back to typing paths manually. "
+		"SkellyClicker native file dialogs are unavailable on the server. "
+		"The web UI will use the browser file picker instead. "
 		f"Reason: {detail}"
 	)
 
 
-def _spawn_dialog(
+def _spawn_tk_dialog(
 	kind: str,
 	title: str,
 	extensions: list[str] | None = None,
@@ -94,6 +90,7 @@ def _spawn_dialog(
 			text=True,
 			check=False,
 			timeout=600,
+			env=os.environ,
 		)
 	except (OSError, subprocess.TimeoutExpired) as exc:
 		raise DialogUnavailable(
@@ -112,6 +109,22 @@ def _spawn_dialog(
 	if not isinstance(paths, list):
 		raise DialogUnavailable("Native file dialog returned unexpected output")
 	return [str(p) for p in paths if p]
+
+
+def _spawn_dialog(
+	kind: str,
+	title: str,
+	extensions: list[str] | None = None,
+	default_name: str = "",
+) -> list[str]:
+	# Prefer zenity on Linux — more reliable than tkinter under uvicorn.
+	if sys.platform.startswith("linux"):
+		from skellyclicker.services.zenity_dialog import zenity_available, zenity_spawn
+
+		if zenity_available():
+			return zenity_spawn(kind, title, extensions, default_name)
+
+	return _spawn_tk_dialog(kind, title, extensions, default_name)
 
 
 def pick_file(title: str, extensions: list[str]) -> str:
