@@ -1,6 +1,8 @@
 """FastAPI routes for session, labeling, and DLC workflow."""
 
 import asyncio
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -17,7 +19,20 @@ from skellyclicker.services.session_store import store
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
-app = FastAPI(title="SkellyClicker", version="0.2.0")
+_logger = logging.getLogger("skellyclicker.dialog")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+	from skellyclicker.services.native_dialog import dialog_startup_warning
+
+	warning = dialog_startup_warning()
+	if warning:
+		_logger.warning(warning)
+	yield
+
+
+app = FastAPI(title="SkellyClicker", version="0.2.0", lifespan=_lifespan)
 
 
 @app.exception_handler(SessionError)
@@ -131,6 +146,14 @@ def dialog_save_file(body: SaveDialogBody):
 		return {"paths": [save_file(body.title, body.extensions or ["*"], body.default_name)]}
 
 	return _dialog_http(run, body)
+
+
+@app.get("/api/dialog/status")
+def dialog_status():
+	from skellyclicker.services.native_dialog import check_dialog_availability
+
+	available, detail = check_dialog_availability()
+	return {"available": available, "detail": detail}
 
 
 @app.get("/api/session", response_model=AppSession)

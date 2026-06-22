@@ -16,6 +16,16 @@ For labelling and training data through DeepLabCut.
 
     - `conda env create -f skellyclicker_env.yaml`
 
+4. **Ubuntu only:** install tkinter for native file dialogs (used by the web UI and legacy GUI):
+
+    ```bash
+    sudo apt install python3-tk
+    ```
+
+    SkellyClicker must run on a machine with a graphical desktop session (`DISPLAY` or
+    `WAYLAND_DISPLAY` set). Dialogs open on the Ubuntu box where the API runs, not inside
+    the browser. Headless SSH without X11 forwarding falls back to typing paths manually.
+
 ## How To Use
 
 ### Web UI (recommended)
@@ -35,9 +45,11 @@ For labelling and training data through DeepLabCut.
     python -m skellyclicker.api
     ```
 
-4. Follow the workflow stepper: **Session → Videos → Label → DLC Project → Train → Analyze → Review**.
+4. Follow the workflow: **Videos → DeepLabCut → Labels → Train & Analyze → Session**.
 
-   Paths are entered as absolute filesystem paths (local lab tool).
+   File pickers use native Ubuntu dialogs via tkinter (absolute paths on the server filesystem).
+   If dialogs are unavailable at startup, the server logs a warning and the UI falls back to
+   manual path entry.
 
 ### Legacy Tk UI
 

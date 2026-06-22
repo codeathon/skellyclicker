@@ -22,6 +22,52 @@ class DialogUnavailable(Exception):
 	"""No display / tkinter available for native dialogs."""
 
 
+def check_dialog_availability() -> tuple[bool, str]:
+	"""Probe whether tkinter can open GUI dialogs (no dialog is shown)."""
+	import os
+	import sys
+
+	if sys.platform.startswith("linux"):
+		has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+		if not has_display:
+			return (
+				False,
+				"No DISPLAY or WAYLAND_DISPLAY — file dialogs need a graphical session "
+				"(local Ubuntu desktop or SSH with X11 forwarding).",
+			)
+
+	try:
+		import tkinter as tk
+	except ImportError:
+		return (
+			False,
+			"tkinter is not installed — on Ubuntu run: sudo apt install python3-tk "
+			"(conda: conda install -c conda-forge tk).",
+		)
+
+	try:
+		root = tk.Tk()
+		root.withdraw()
+		root.update_idletasks()
+		root.destroy()
+	except tk.TclError as exc:
+		return False, f"tkinter cannot connect to a display: {exc}"
+
+	return True, "Native file dialogs are available."
+
+
+def dialog_startup_warning() -> str | None:
+	"""Human-readable warning for server logs when dialogs are unavailable."""
+	available, detail = check_dialog_availability()
+	if available:
+		return None
+	return (
+		"SkellyClicker file dialogs are unavailable. "
+		"The web UI will fall back to typing paths manually. "
+		f"Reason: {detail}"
+	)
+
+
 def _spawn_dialog(
 	kind: str,
 	title: str,
