@@ -74,10 +74,13 @@ class SessionStore:
 		"""Store video list and reset frame stats; close labeler if video set changed."""
 		if paths != (self.session.videos or []):
 			self._teardown_labeler()
-		self.session.videos = paths
+		self.session.videos = paths if paths else None
 		self.session.frame_count = 0
-		self.session.workflow_state = WorkflowState.ready_to_label
-		self.session.status_message = f"{len(paths)} video(s) selected"
+		if paths:
+			self.session.workflow_state = WorkflowState.ready_to_label
+			self.session.status_message = f"{len(paths)} video(s) selected"
+		else:
+			self.session.status_message = "No videos selected"
 
 	def set_videos(self, paths: list[str]) -> AppSession:
 		self._assert_no_active_job()
@@ -96,6 +99,17 @@ class SessionStore:
 				seen.add(path)
 		self._apply_videos(existing)
 		return self.session
+
+	def remove_video(self, path: str) -> AppSession:
+		"""Drop one video from the session list."""
+		self._assert_no_active_job()
+		resolved = str(Path(path).expanduser().resolve())
+		existing = list(self.session.videos or [])
+		if resolved not in existing:
+			raise SessionError(f"Video not in session: {path}")
+		existing.remove(resolved)
+		self._apply_videos(existing)
+		return refresh_workflow_state(self.session)
 
 	def set_human_labels_path(self, path: str) -> AppSession:
 		self._assert_no_active_job()

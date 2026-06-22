@@ -207,6 +207,11 @@ def add_videos(body: PathListBody) -> AppSession:
 	return store.add_videos(body.paths)
 
 
+@app.post("/api/videos/remove", response_model=AppSession)
+def remove_video(body: PathBody) -> AppSession:
+	return store.remove_video(body.path)
+
+
 @app.post("/api/labels/human", response_model=AppSession)
 def set_human_labels(body: PathBody) -> AppSession:
 	return store.set_human_labels_path(body.path)

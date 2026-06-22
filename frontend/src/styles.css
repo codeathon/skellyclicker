@@ -295,10 +295,51 @@ button:disabled {
 
 .video-list {
   margin: 0 0 0.6rem;
-  padding-left: 1.1rem;
+  padding: 0;
+  list-style: none;
   font-size: 0.82rem;
   color: #c5d0de;
+}
+
+.video-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.35rem;
+}
+
+.video-list-name {
+  flex: 1;
+  min-width: 0;
   word-break: break-all;
+}
+
+.video-remove-btn {
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #9b2222;
+  border: 1px solid #c03030;
+  position: relative;
+}
+
+.video-remove-btn::before {
+  content: "";
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  background: #111;
+  border-radius: 1px;
+}
+
+.video-remove-btn:hover:not(:disabled) {
+  background: #b52a2a;
 }
 
 .label-canvas {

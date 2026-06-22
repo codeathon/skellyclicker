@@ -189,9 +189,23 @@ export default function App() {
                 <h3>Videos</h3>
                 {session.videos?.length ? (
                   <ul className="video-list">
-                    {session.videos.map((p) => (
-                      <li key={p}>{p.split(/[/\\]/).pop() ?? p}</li>
-                    ))}
+                    {session.videos.map((p) => {
+                      const name = p.split(/[/\\]/).pop() ?? p;
+                      return (
+                        <li key={p} className="video-list-item">
+                          <span className="video-list-name" title={p}>
+                            {name}
+                          </span>
+                          <button
+                            type="button"
+                            className="video-remove-btn"
+                            aria-label={`Remove ${name}`}
+                            disabled={!!session.active_job_id}
+                            onClick={() => run(() => client.removeVideo(p))}
+                          />
+                        </li>
+                      );
+                    })}
                   </ul>
                 ) : (
                   <p className="hint inline-hint">
@@ -199,29 +213,14 @@ export default function App() {
                   </p>
                 )}
                 <button
+                  disabled={!!session.active_job_id}
                   onClick={async () => {
-                    const paths = await pathDialog.openVideos(
-                      session.videos?.length
-                        ? "Replace all videos with"
-                        : "Select videos",
-                    );
-                    if (paths) run(() => client.setVideos(paths));
+                    const paths = await pathDialog.openVideos("Add videos");
+                    if (paths) run(() => client.addVideos(paths));
                   }}
                 >
-                  {session.videos?.length ? "Replace Videos" : "Select Videos"}
+                  Add Videos
                 </button>
-                {session.videos?.length ? (
-                  <button
-                    onClick={async () => {
-                      const paths = await pathDialog.openVideos(
-                        "Add videos to the current list",
-                      );
-                      if (paths) run(() => client.addVideos(paths));
-                    }}
-                  >
-                    Add Videos
-                  </button>
-                ) : null}
               </div>
 
               <div className="action-group">

@@ -92,6 +92,16 @@ def test_can_open_labeler_with_human_csv(fresh_store):
 	assert fresh_store._can_open_labeler() is True
 
 
+def test_remove_video_updates_session(fresh_store, tmp_path):
+	v1 = tmp_path / "a.mp4"
+	v2 = tmp_path / "b.mp4"
+	v1.write_bytes(b"x")
+	v2.write_bytes(b"x")
+	fresh_store.set_videos([str(v1.resolve()), str(v2.resolve())])
+	fresh_store.remove_video(str(v1.resolve()))
+	assert fresh_store.session.videos == [str(v2.resolve())]
+
+
 def test_close_labeler_leaves_labeling_state(fresh_store):
 	"""Closing labeler must exit workflow_state=labeling (regression)."""
 	from skellyclicker.services.models import WorkflowState

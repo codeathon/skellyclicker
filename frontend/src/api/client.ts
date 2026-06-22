@@ -119,6 +119,11 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ paths }),
     }),
+  removeVideo: (path: string) =>
+    api<AppSession>("/api/videos/remove", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
   setHumanLabels: (path: string) =>
     api<AppSession>("/api/labels/human", {
       method: "POST",
