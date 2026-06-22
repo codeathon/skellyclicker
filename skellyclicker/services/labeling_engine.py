@@ -1,18 +1,12 @@
 """Headless labeling session — wraps VideoHandler without OpenCV windows."""
 
-from pathlib import Path
 from uuid import uuid4
 
 import cv2
-import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from skellyclicker import MAX_WINDOW_SIZE
 from skellyclicker.core.video_handler.video_handler import VideoHandler
-
-TRACKED_POINTS_JSON = (
-	Path(__file__).resolve().parents[2] / "tracked_points.json"
-)
 
 
 class LabelingEngine(BaseModel):
@@ -32,22 +26,27 @@ class LabelingEngine(BaseModel):
 		human_labels_path: str | None,
 		machine_labels_path: str | None,
 		train_on_machine_labels: bool,
+		tracked_point_names: list[str],
 	) -> "LabelingEngine":
 		# Machine-only mode uses machine CSV as primary label source.
+		primary_csv: str | None = None
+		overlay: str | None = None
+		bodyparts: list[str] | None = None
+
 		if train_on_machine_labels and machine_labels_path:
-			primary = machine_labels_path
-			overlay = None
+			primary_csv = machine_labels_path
 		elif human_labels_path:
-			primary = human_labels_path
+			primary_csv = human_labels_path
 			overlay = machine_labels_path
 		else:
-			primary = str(TRACKED_POINTS_JSON)
+			bodyparts = tracked_point_names
 			overlay = machine_labels_path
 
 		handler = VideoHandler.from_videos(
 			video_paths=video_paths,
 			max_window_size=MAX_WINDOW_SIZE,
-			data_handler_path=primary,
+			data_handler_path=primary_csv,
+			tracked_point_names=bodyparts,
 			machine_labels_path=overlay,
 		)
 		return cls(video_handler=handler)

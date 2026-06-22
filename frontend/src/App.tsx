@@ -23,6 +23,20 @@ function promptPaths(label: string, existing: string[] = []): string[] | null {
     .filter(Boolean);
 }
 
+function parseBodyparts(raw: string): string[] {
+  return raw
+    .split(/[,;\n]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+/** Open Labeler requires videos plus labels CSV or a DLC project with bodyparts. */
+function canOpenLabeler(session: AppSession): boolean {
+  if (!session.videos?.length) return false;
+  if (session.human_labels_path || session.machine_labels_path) return true;
+  return !!(session.dlc_project_path && session.tracked_point_names.length);
+}
+
 /** Shown in header — saved filename or unsaved placeholder. */
 function sessionLabel(session: AppSession): string {
   if (session.session_saved_path) {
@@ -182,7 +196,7 @@ export default function App() {
           ) : (
             <section className="panel actions">
               <div className="action-group">
-                <h3>Videos &amp; Labeling</h3>
+                <h3>Videos</h3>
                 {session.videos?.length ? (
                   <ul className="video-list">
                     {session.videos.map((p) => (
@@ -218,16 +232,45 @@ export default function App() {
                     Add Videos
                   </button>
                 ) : null}
+              </div>
+
+              <div className="action-group">
+                <h3>DeepLabCut</h3>
                 <button
-                  disabled={!session.videos?.length}
-                  onClick={() => run(client.openLabeler)}
+                  onClick={() => {
+                    const parent = promptPath("Parent directory for new project");
+                    const name = promptPath("Project name");
+                    if (!parent || !name) return;
+                    let bodyparts = session.tracked_point_names;
+                    if (!bodyparts.length) {
+                      const raw = promptPath(
+                        "Bodyparts (comma-separated, e.g. nose,left_eye,right_eye)",
+                      );
+                      if (!raw) return;
+                      bodyparts = parseBodyparts(raw);
+                      if (!bodyparts.length) return;
+                    }
+                    run(() => client.createDlc(parent, name, bodyparts));
+                  }}
                 >
-                  Open Labeler
+                  Create DLC Project
+                </button>
+                <button
+                  onClick={() => {
+                    const p = promptPath("DLC project directory");
+                    if (p) run(() => client.loadDlc(p));
+                  }}
+                >
+                  Load DLC Project
                 </button>
               </div>
 
               <div className="action-group">
                 <h3>Labels</h3>
+                <p className="hint inline-hint">
+                  Import labels to resume, or open labeler to create/edit using
+                  bodyparts from your DLC project.
+                </p>
                 <button
                   onClick={() => {
                     const p = promptPath("Human labels CSV");
@@ -255,28 +298,18 @@ export default function App() {
                   />
                   Train on machine labels
                 </label>
-              </div>
-
-              <div className="action-group">
-                <h3>DeepLabCut</h3>
                 <button
-                  onClick={() => {
-                    const parent = promptPath("Parent directory for new project");
-                    const name = promptPath("Project name");
-                    if (parent && name)
-                      run(() => client.createDlc(parent, name));
-                  }}
+                  disabled={!canOpenLabeler(session)}
+                  onClick={() => run(client.openLabeler)}
                 >
-                  Create DLC Project
+                  Open Labeler
                 </button>
-                <button
-                  onClick={() => {
-                    const p = promptPath("DLC project directory");
-                    if (p) run(() => client.loadDlc(p));
-                  }}
-                >
-                  Load DLC Project
-                </button>
+                {!canOpenLabeler(session) && (
+                  <p className="hint inline-hint">
+                    Import Human or Machine labels, or load/create a DLC project
+                    to define bodyparts.
+                  </p>
+                )}
               </div>
 
               <div className="action-group">
@@ -318,7 +351,8 @@ export default function App() {
                 <button
                   onClick={() => {
                     const p = promptPath(
-                      "Save session to",
+                      "Full path for session .json (creates new file).\n" +
+                        "Tip: first_test_session.json → ~/skellyclicker_sessions/",
                       session.session_saved_path ?? "",
                     );
                     if (p) run(() => client.saveSession(p));
@@ -328,26 +362,15 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => {
-                    const p = promptPath("Session JSON path");
+                    const p = promptPath(
+                      "Full path to existing session .json (must already exist)",
+                    );
                     if (p) run(() => client.loadSession(p));
                   }}
                 >
                   Load Session
                 </button>
               </div>
-
-              {session.workflow_state === "review" && (
-                <div className="action-group highlight">
-                  <h3>Review Predictions</h3>
-                  <p>
-                    Machine labels loaded. Open the labeler to compare and
-                    correct.
-                  </p>
-                  <button onClick={() => run(client.openLabeler)}>
-                    Review in Labeler
-                  </button>
-                </div>
-              )}
             </section>
           )}
         </main>

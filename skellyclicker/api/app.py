@@ -45,6 +45,7 @@ class PathBody(BaseModel):
 class CreateProjectBody(BaseModel):
 	parent_directory: str
 	project_name: str
+	bodyparts: list[str] | None = None
 
 
 class CloseLabelerBody(BaseModel):
@@ -137,18 +138,23 @@ def create_dlc(body: CreateProjectBody) -> AppSession:
 		DeeplabcutHandler,
 	)
 
-	if not store.session.tracked_point_names:
-		raise HTTPException(status_code=400, detail="Label videos to define bodyparts first")
+	bodyparts = body.bodyparts or store.session.tracked_point_names
+	if not bodyparts:
+		raise HTTPException(
+			status_code=400,
+			detail="Provide bodyparts when creating a DLC project, or import labels first.",
+		)
 	store._assert_no_active_job()
 	handler = DeeplabcutHandler.create_deeplabcut_project(
 		project_name=body.project_name,
 		project_parent_directory=body.parent_directory,
-		tracked_point_names=store.session.tracked_point_names,
+		tracked_point_names=bodyparts,
 	)
 	store.dlc_handler = handler
 	full_path = str(Path(body.parent_directory) / body.project_name)
 	store.session.dlc_project_path = full_path
 	store.session.dlc_iteration = handler.iteration
+	store.session.tracked_point_names = bodyparts
 	store.session.workflow_state = WorkflowState.ready_to_train
 	return store.get_session()
 

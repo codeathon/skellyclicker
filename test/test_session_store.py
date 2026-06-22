@@ -31,6 +31,67 @@ def test_bump_generation_on_teardown(fresh_store):
 	assert fresh_store.session.generation == gen + 1
 
 
+def test_save_session_bare_filename_uses_home_directory(fresh_store, monkeypatch, tmp_path):
+	home = tmp_path / "home"
+	home.mkdir()
+	monkeypatch.setattr(Path, "home", lambda: home)
+
+	fresh_store.save_session_json("first_test_session.json")
+	target = home / "skellyclicker_sessions" / "first_test_session.json"
+	assert target.is_file()
+	assert fresh_store.session.session_saved_path == str(target.resolve())
+
+
+def test_save_session_creates_new_json_file(fresh_store, tmp_path):
+	path = tmp_path / "first_test_session.json"
+	assert not path.is_file()
+	fresh_store.save_session_json(str(path))
+	assert path.is_file()
+	assert fresh_store.session.session_saved_path == str(path.resolve())
+
+
+def test_save_session_creates_parent_directories(fresh_store, tmp_path):
+	path = tmp_path / "nested" / "dir" / "session.json"
+	fresh_store.save_session_json(str(path))
+	assert path.is_file()
+
+
+def test_load_session_missing_file_raises_session_error(fresh_store, tmp_path):
+	from skellyclicker.services.errors import SessionError
+
+	missing = tmp_path / "first_test_session.json"
+	with pytest.raises(SessionError, match="Session file not found"):
+		fresh_store.load_session_json(str(missing))
+
+
+def test_save_session_rejects_non_json_extension(fresh_store, tmp_path):
+	from skellyclicker.services.errors import SessionError
+
+	with pytest.raises(SessionError, match="must end with .json"):
+		fresh_store.save_session_json(str(tmp_path / "session.txt"))
+
+
+def test_open_labeler_requires_label_context(fresh_store):
+	from skellyclicker.services.errors import SessionError
+
+	fresh_store.session.videos = ["/tmp/fake.mp4"]
+	with pytest.raises(SessionError, match="bodyparts"):
+		fresh_store.open_labeler()
+
+
+def test_can_open_labeler_with_dlc_bodyparts_only(fresh_store):
+	fresh_store.session.videos = ["/tmp/fake.mp4"]
+	fresh_store.session.dlc_project_path = "/tmp/myproject"
+	fresh_store.session.tracked_point_names = ["nose", "tail"]
+	assert fresh_store._can_open_labeler() is True
+
+
+def test_can_open_labeler_with_human_csv(fresh_store):
+	fresh_store.session.videos = ["/tmp/fake.mp4"]
+	fresh_store.session.human_labels_path = "/tmp/labels.csv"
+	assert fresh_store._can_open_labeler() is True
+
+
 def test_close_labeler_leaves_labeling_state(fresh_store):
 	"""Closing labeler must exit workflow_state=labeling (regression)."""
 	from skellyclicker.services.models import WorkflowState

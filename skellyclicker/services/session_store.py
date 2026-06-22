@@ -121,16 +121,32 @@ class SessionStore:
 		self.session.workflow_state = WorkflowState.review
 		return self.session
 
+	def _can_open_labeler(self) -> bool:
+		"""Labeler needs videos plus imported labels or a DLC project with bodyparts."""
+		if not self.session.videos:
+			return False
+		if self.session.human_labels_path or self.session.machine_labels_path:
+			return True
+		return bool(
+			self.session.dlc_project_path and self.session.tracked_point_names
+		)
+
 	def open_labeler(self) -> AppSession:
 		self._assert_no_active_job()
 		if not self.session.videos:
 			raise SessionError("Select videos first")
+		if not self._can_open_labeler():
+			raise SessionError(
+				"Import Human or Machine labels, or load/create a DLC project "
+				"to define bodyparts before opening the labeler."
+			)
 		self._teardown_labeler()
 		engine = LabelingEngine.open(
 			video_paths=self.session.videos,
 			human_labels_path=self.session.human_labels_path,
 			machine_labels_path=self.session.machine_labels_path,
 			train_on_machine_labels=self.session.train_on_machine_labels,
+			tracked_point_names=list(self.session.tracked_point_names),
 		)
 		self.labeling_engine = engine
 		self.session.labeling_session_id = engine.session_id
@@ -186,17 +202,47 @@ class SessionStore:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
 		return refresh_workflow_state(self.session)
 
+	def _resolve_session_json_path(self, path: str) -> Path:
+		"""Normalize session JSON path; bare filenames go under ~/skellyclicker_sessions/."""
+		raw = path.strip()
+		if not raw:
+			raise SessionError("Session path is empty")
+		resolved = Path(raw).expanduser()
+		# A filename alone has no parent dir — avoid writing into the server's cwd.
+		if resolved.parent == Path("."):
+			resolved = Path.home() / "skellyclicker_sessions" / resolved.name
+		if resolved.suffix.lower() != ".json":
+			raise SessionError("Session path must end with .json")
+		if resolved.exists() and resolved.is_dir():
+			raise SessionError(f"Session path is a directory, not a file: {resolved}")
+		return resolved
+
 	def save_session_json(self, path: str) -> AppSession:
-		self.session.session_saved_path = path
-		Path(path).write_text(self.session.model_dump_json(indent=2))
+		# Save creates or overwrites — never requires the file to exist beforehand.
+		target = self._resolve_session_json_path(path)
+		try:
+			target.parent.mkdir(parents=True, exist_ok=True)
+			target.write_text(self.session.model_dump_json(indent=2))
+		except OSError as exc:
+			raise SessionError(
+				f"Could not write session file: {target.resolve()}. {exc}"
+			) from exc
+		self.session.session_saved_path = str(target.resolve())
 		return self.session
 
 	def load_session_json(self, path: str) -> AppSession:
 		self._assert_no_active_job()
 		self._teardown_all()
 		import json
-		data = json.loads(Path(path).read_text())
+		target = self._resolve_session_json_path(path)
+		if not target.is_file():
+			raise SessionError(
+				f"Session file not found: {target.resolve()}. "
+				"Use Save Session first to create it, or check the full path."
+			)
+		data = json.loads(target.read_text())
 		self.session = AppSession.model_validate(data)
+		self.session.session_saved_path = str(target.resolve())
 		if self.session.dlc_project_path:
 			from skellyclicker.core.deeplabcut_handler.deeplabcut_handler import (
 				DeeplabcutHandler,

@@ -44,7 +44,8 @@ class VideoHandler(BaseModel):
         cls,
         video_paths: list[str],
         max_window_size: tuple[int, int],
-        data_handler_path: str,
+        data_handler_path: str | None = None,
+        tracked_point_names: list[str] | None = None,
         machine_labels_path: str | None = None,
     ):
         video_paths = sorted(video_paths)
@@ -55,16 +56,27 @@ class VideoHandler(BaseModel):
             video_paths, max_window_size
         )
 
-        if Path(data_handler_path).suffix == ".json":
+        if data_handler_path and Path(data_handler_path).suffix == ".json":
             data_handler = DataHandler.from_config(
                 DataHandlerConfig.from_config_file(
                     videos=videos, config_path=data_handler_path
                 )
             )
-        elif Path(data_handler_path).suffix == ".csv":
+        elif data_handler_path and Path(data_handler_path).suffix == ".csv":
             data_handler = DataHandler.from_csv(data_handler_path)
+        elif tracked_point_names:
+            # Empty click grid from session/DLC bodyparts — no tracked_points.json file.
+            data_handler = DataHandler.from_config(
+                DataHandlerConfig(
+                    num_frames=frame_count,
+                    video_names=sorted(v.name for v in videos.values()),
+                    tracked_point_names=tracked_point_names,
+                )
+            )
         else:
-            raise ValueError(f"Invalid data handler file: {data_handler_path}")
+            raise ValueError(
+                "Provide a labels CSV/JSON path or tracked_point_names for bodyparts"
+            )
 
         if machine_labels_path:
             machine_labels_handler = DataHandler.from_csv(machine_labels_path)

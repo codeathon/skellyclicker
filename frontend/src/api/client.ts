@@ -66,7 +66,14 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || res.statusText);
+    const detail = err.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join("; ")
+          : res.statusText;
+    throw new Error(message || res.statusText);
   }
   return res.json();
 }
@@ -133,10 +140,14 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  createDlc: (parent_directory: string, project_name: string) =>
+  createDlc: (
+    parent_directory: string,
+    project_name: string,
+    bodyparts?: string[],
+  ) =>
     api<AppSession>("/api/dlc/create", {
       method: "POST",
-      body: JSON.stringify({ parent_directory, project_name }),
+      body: JSON.stringify({ parent_directory, project_name, bodyparts }),
     }),
   train: () => api<{ job_id: string }>("/api/dlc/train", { method: "POST" }),
   analyze: (video_paths: string[], use_training_videos: boolean) =>
