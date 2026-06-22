@@ -11,10 +11,13 @@ export function LabelingCanvas({ onClose }: Props) {
 	const [imgSrc, setImgSrc] = useState("");
 	const [sliderFrame, setSliderFrame] = useState(0);
 	const [error, setError] = useState<string | null>(null);
+	const [isClosing, setIsClosing] = useState(false);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
 	const sliderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Prevent Esc / double-click from starting a second close while the save dialog is open.
+	const closingRef = useRef(false);
 
 	const loadFrame = useCallback(async (frameNumber: number) => {
 		const s = await client.setFrame(frameNumber);
@@ -35,7 +38,6 @@ export function LabelingCanvas({ onClose }: Props) {
 		refresh().catch((e) => setError(String(e)));
 	}, [refresh]);
 
-	// Keep keyboard focus on the labeler panel (canvas is not focusable by default).
 	useEffect(() => {
 		containerRef.current?.focus();
 	}, [state?.session_id]);
@@ -48,17 +50,22 @@ export function LabelingCanvas({ onClose }: Props) {
 
 	const closeLabeler = useCallback(
 		async (save: boolean) => {
+			if (closingRef.current) return;
+			closingRef.current = true;
+			setIsClosing(true);
+			setError(null);
 			try {
-				setError(null);
 				let savePath: string | undefined;
 				if (save) {
-					const picked = await pathDialog.saveCsv("Save human labels CSV");
-					if (!picked) return;
-					savePath = picked;
+					const picked = await pathDialog.saveCsvForLabeler();
+					// Cancelled save dialog → default path under the video folder on the server.
+					savePath = picked ?? undefined;
 				}
 				const session = await client.closeLabeler(save, savePath);
 				onClose(session);
 			} catch (e) {
+				closingRef.current = false;
+				setIsClosing(false);
 				setError(e instanceof Error ? e.message : String(e));
 			}
 		},
@@ -67,7 +74,7 @@ export function LabelingCanvas({ onClose }: Props) {
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (!state) return;
+			if (!state || closingRef.current) return;
 			const key = e.key.toLowerCase();
 
 			if (key === "escape") {
@@ -116,7 +123,7 @@ export function LabelingCanvas({ onClose }: Props) {
 
 	const onClick = async (e: React.MouseEvent<HTMLCanvasElement>) => {
 		const canvas = canvasRef.current;
-		if (!canvas || !state) return;
+		if (!canvas || !state || closingRef.current) return;
 		const rect = canvas.getBoundingClientRect();
 		const scaleX = canvas.width / rect.width;
 		const scaleY = canvas.height / rect.height;
@@ -132,7 +139,6 @@ export function LabelingCanvas({ onClose }: Props) {
 		}
 	};
 
-	/** Scrub bar — debounced so dragging does not spam JPEG encodes on the server. */
 	const onSliderInput = (frameNumber: number) => {
 		setSliderFrame(frameNumber);
 		if (sliderDebounceRef.current) clearTimeout(sliderDebounceRef.current);
@@ -166,14 +172,14 @@ export function LabelingCanvas({ onClose }: Props) {
 				<div className="labeling-nav">
 					<button
 						type="button"
-						disabled={state.frame_number <= 0}
+						disabled={state.frame_number <= 0 || isClosing}
 						onClick={() => loadFrame(state.frame_number - 1).catch((e) => setError(String(e)))}
 					>
 						← Prev
 					</button>
 					<button
 						type="button"
-						disabled={state.frame_number >= state.frame_count - 1}
+						disabled={state.frame_number >= state.frame_count - 1 || isClosing}
 						onClick={() => loadFrame(state.frame_number + 1).catch((e) => setError(String(e)))}
 					>
 						Next →
@@ -181,17 +187,28 @@ export function LabelingCanvas({ onClose }: Props) {
 				</div>
 				<button
 					type="button"
+					className="save-close-labeler"
+					disabled={isClosing}
+					onClick={() => void closeLabeler(true)}
+				>
+					Save &amp; Close
+				</button>
+				<button
+					type="button"
 					className="close-labeler"
+					disabled={isClosing}
 					onClick={() => {
-						const save = window.confirm("Save labels before closing?");
-						void closeLabeler(save);
+						if (window.confirm("Close without saving labels?")) {
+							void closeLabeler(false);
+						}
 					}}
 				>
-					Close Labeler
+					Close without Saving
 				</button>
 				<span className="hint">a/d or ←/→ frames · m overlay · Esc close</span>
 			</div>
 			{error && <div className="error">{error}</div>}
+			{isClosing && <p className="hint">Saving and closing…</p>}
 			<img id="label-img" src={imgSrc} alt="" hidden onLoad={onImageLoad} />
 			<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
 			<div className="frame-scrubber">
@@ -204,8 +221,9 @@ export function LabelingCanvas({ onClose }: Props) {
 					min={0}
 					max={Math.max(0, state.frame_count - 1)}
 					value={sliderFrame}
+					disabled={isClosing}
 					onInput={(e) => onSliderInput(Number(e.currentTarget.value))}
-					onChange={(e) => onSliderInput(Number(e.target.value))}
+					onChange={(e) => onSliderInput(Number(e.currentTarget.value))}
 					onMouseUp={(e) => onSliderCommit(Number(e.currentTarget.value))}
 					onTouchEnd={(e) => onSliderCommit(Number(e.currentTarget.value))}
 				/>

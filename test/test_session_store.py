@@ -102,3 +102,28 @@ def test_close_labeler_leaves_labeling_state(fresh_store):
 	fresh_store.session.videos = ["/tmp/fake.mp4"]
 	refresh_workflow_state(fresh_store.session)
 	assert fresh_store.session.workflow_state != WorkflowState.labeling
+
+
+def test_close_labeler_save_registers_human_labels(fresh_store, tmp_path):
+	"""Saving from the labeler always registers human_labels_path."""
+	from unittest.mock import MagicMock
+
+	csv_path = tmp_path / "labels.csv"
+	csv_path.write_text("video,frame,nose_x,nose_y\ncam1,0,1.0,2.0\n")
+
+	mock_engine = MagicMock()
+	mock_engine.session_id = "label-session-1"
+	mock_engine.close.return_value = str(csv_path)
+	mock_engine.video_handler.data_handler.get_nonempty_frames.return_value = [0]
+
+	fresh_store.labeling_engine = mock_engine
+	fresh_store.session.labeling_session_id = "label-session-1"
+	fresh_store.session.train_on_machine_labels = True
+	fresh_store.session.machine_labels_path = "/tmp/machine.csv"
+
+	fresh_store.close_labeler(save=True, save_path=str(csv_path))
+
+	assert fresh_store.session.human_labels_path == str(csv_path)
+	assert fresh_store.session.machine_labels_path == "/tmp/machine.csv"
+	assert fresh_store.labeling_engine is None
+	assert "Labels saved to" in fresh_store.session.status_message

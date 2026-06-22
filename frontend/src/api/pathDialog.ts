@@ -136,6 +136,23 @@ export const pathDialog = {
 			"saving labels",
 		).then((paths) => paths?.[0] ?? null),
 
+	/** Labeler save — null means use the server default path under the video folder. */
+	saveCsvForLabeler: async () => {
+		try {
+			const { paths } = await client.dialogSaveFile(
+				"Save human labels CSV",
+				["csv"],
+				"skellyclicker_labels.csv",
+			);
+			return paths[0] ?? null;
+		} catch (e) {
+			if (e instanceof Error && e.message === "DIALOG_UNAVAILABLE") {
+				return null;
+			}
+			throw e;
+		}
+	},
+
 	saveSessionJson: (defaultName = "session.json") =>
 		requireServerDialog(
 			() =>

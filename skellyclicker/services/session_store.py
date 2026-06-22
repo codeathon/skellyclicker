@@ -177,10 +177,14 @@ class SessionStore:
 				raise SessionError(
 					"Could not save labels to CSV. Try closing the labeler again."
 				)
-			if self.session.train_on_machine_labels:
-				self.session.machine_labels_path = path
-			else:
-				self.session.human_labels_path = path
+			# Labeler output is always human labels (legacy UI: csv_saved_path).
+			import pandas as pd
+
+			df = pd.read_csv(path)
+			self.session.human_labels_path = path
+			self.session.tracked_point_names = bodypart_names_from_csv_columns(
+				list(df.columns),
+			)
 			self.session.status_message = f"Labels saved to {path}"
 		else:
 			self.session.status_message = "Labeling closed without saving"
