@@ -287,6 +287,7 @@ class VideoHandler(BaseModel):
                 if annotate_images:
                     image = self.image_annotator.annotate_single_image(
                         image,
+                        active_point=self.data_handler.active_point,
                         click_data=self.data_handler.get_data_by_video_frame(
                             video_index=video_index, frame_number=frame_number
                         ),

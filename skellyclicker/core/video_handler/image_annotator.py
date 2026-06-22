@@ -86,6 +86,28 @@ def get_colors(keys: list[str]) -> dict[str, tuple[int, ...]]:
     return colors
 
 
+def _comma_array(names: list[str]) -> str:
+    """Compact list for on-frame overlay, e.g. [p1, p2, p3]."""
+    return "[" + ", ".join(names) + "]"
+
+
+def _labels_overlay_text(
+    tracked_points: list[str],
+    click_data: dict[str, ClickData],
+    active_point: str | None,
+) -> str:
+    """Human-label status: placed on this frame vs still available to click."""
+    placed = [p for p in tracked_points if p in click_data]
+    available = [p for p in tracked_points if p not in click_data]
+    lines: list[str] = []
+    if placed:
+        lines.append(f"On frame: {_comma_array(placed)}")
+    lines.append(f"Labels available: {_comma_array(available)}")
+    if active_point:
+        lines.append(f"active: {active_point}")
+    return "\n".join(lines)
+
+
 class ImageAnnotatorConfig(BaseModel):
     marker_type: int = cv2.MARKER_DIAMOND
     marker_size: int = 15
@@ -174,25 +196,19 @@ class ImageAnnotator(BaseModel):
                                   )
 
         if self.config.show_clicks:
-            # List the markers on the image, with a check or x based on if they are labeled
-            label_string = ""
-            for tracked_point in self.config.tracked_points:
-                if tracked_point in click_data:
-                    label_string += f"{tracked_point}: {click_data[tracked_point].x}, {click_data[tracked_point].y} "
-                else:
-                    label_string += f"{tracked_point}: (?, ?) "
-
-                if active_point and tracked_point == active_point:
-                    label_string += " <-(active)"
-                label_string += "\n"
-
-            draw_doubled_text(image=annotated_image,
-                            text=label_string,
-                            x=text_offset,
-                            y=text_offset,
-                            font_scale=self.config.text_size*.75,
-                            color= (255, 150, 55),
-                            thickness=self.config.text_thickness,
-                            line_spacing=30,
-                            )
+            overlay_font = self.config.text_size * 0.45
+            draw_doubled_text(
+                image=annotated_image,
+                text=_labels_overlay_text(
+                    self.config.tracked_points,
+                    click_data,
+                    active_point,
+                ),
+                x=text_offset,
+                y=text_offset,
+                font_scale=overlay_font,
+                color=(255, 150, 55),
+                thickness=1,
+                line_spacing=16,
+            )
         return annotated_image

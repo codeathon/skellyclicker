@@ -30,16 +30,24 @@ def build_dlc_formatted_header(labels_dataframe: pd.DataFrame, scorer_name: str)
     return header_df, joint_names
 
 def get_session_name(path_to_videos_for_training: str) -> str:
+    """Prefix for DLC labeled-data folders — session_* if present, else video folder name."""
     path_parts = Path(path_to_videos_for_training).parts
     for part in path_parts:
-        if part.startswith('session'):
+        if part.startswith("session") or part.startswith("Session"):
             return part
-        
-    for part in path_parts:
-        if part.startswith('Session'):
-            return part
-        
-    raise ValueError(f"Session name not found in path: {path_to_videos_for_training} - must include string 'session'")
+
+    folder_name = Path(path_to_videos_for_training).name
+    if folder_name:
+        logger.info(
+            "No session_* segment in %s; using folder name %r for labeled-data prefix",
+            path_to_videos_for_training,
+            folder_name,
+        )
+        return folder_name
+
+    raise ValueError(
+        f"Could not derive a dataset name from path: {path_to_videos_for_training}"
+    )
 
 
 def fill_in_labelled_data_folder(path_to_videos_for_training: str,
