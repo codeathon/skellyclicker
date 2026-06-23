@@ -327,14 +327,6 @@ export default function App() {
                   >
                     Import Machine Labels
                   </button>
-                  <button
-                    onClick={async () => {
-                      const p = await pathDialog.openSessionJson();
-                      if (p) run(() => client.loadSession(p));
-                    }}
-                  >
-                    Load Session
-                  </button>
                 </div>
               </details>
 
@@ -389,6 +381,14 @@ export default function App() {
                   }}
                 >
                   Save Session
+                </button>
+                <button
+                  onClick={async () => {
+                    const p = await pathDialog.openSessionJson();
+                    if (p) run(() => client.loadSession(p));
+                  }}
+                >
+                  Load Session
                 </button>
               </div>
             </section>
