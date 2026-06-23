@@ -177,6 +177,13 @@ def get_session() -> AppSession:
 	return store.get_session()
 
 
+@app.get("/api/workflow/hints")
+def workflow_hints():
+	from skellyclicker.services.workflow import build_workflow_hints
+
+	return build_workflow_hints(store.get_session())
+
+
 @app.post("/api/session/new", response_model=AppSession)
 def new_session() -> AppSession:
 	return store.start_new_session()

@@ -32,3 +32,48 @@ def refresh_workflow_state(session: AppSession) -> AppSession:
 		return session
 	session.workflow_state = derive_workflow_state(session)
 	return session
+
+
+def _has_videos(session: AppSession) -> bool:
+	return bool(session.videos)
+
+
+def _has_dlc(session: AppSession) -> bool:
+	return bool(session.dlc_project_path)
+
+
+def _labels_for_train(session: AppSession) -> str | None:
+	if session.train_on_machine_labels:
+		return session.machine_labels_path
+	return session.human_labels_path
+
+
+def build_workflow_hints(session: AppSession) -> dict:
+	"""Prerequisites for train/analyze — mirrors frontend workflowSteps gating."""
+	missing_train: list[str] = []
+	missing_analyze: list[str] = []
+
+	if not _has_dlc(session):
+		missing_train.append("Load or create a DLC project")
+		missing_analyze.append("Load or create a DLC project")
+	if not _has_videos(session):
+		missing_train.append("Add videos")
+		missing_analyze.append("Add videos")
+	if not _labels_for_train(session):
+		if session.train_on_machine_labels:
+			missing_train.append("Import or generate machine labels before training")
+		else:
+			missing_train.append("Label videos or import human labels before training")
+	if session.dlc_iteration is None:
+		missing_analyze.append("Train the network before analyzing")
+
+	if session.active_job_id:
+		missing_train.append("Wait for the current job to finish")
+		missing_analyze.append("Wait for the current job to finish")
+
+	return {
+		"can_train": len(missing_train) == 0,
+		"can_analyze": len(missing_analyze) == 0,
+		"missing_train": missing_train,
+		"missing_analyze": missing_analyze,
+	}

@@ -4,6 +4,17 @@ import { pathDialog } from "./api/pathDialog";
 import { JobProgressBar, JobProgressState } from "./components/JobProgressBar";
 import { LabelingCanvas } from "./components/LabelingCanvas";
 import { LoadedAssets } from "./components/LoadedAssets";
+import { NextStepBanner } from "./components/NextStepBanner";
+import { WorkflowStepper } from "./components/WorkflowStepper";
+import {
+  canAnalyze,
+  canOpenLabeler,
+  canTrain,
+  analyzeBlockReason,
+  deriveWorkflowGuide,
+  trainBlockReason,
+  StepId,
+} from "./workflow/workflowSteps";
 
 function promptText(label: string, defaultValue = ""): string | null {
   const v = window.prompt(label, defaultValue);
@@ -15,13 +26,6 @@ function parseBodyparts(raw: string): string[] {
     .split(/[,;\n]+/)
     .map((p) => p.trim())
     .filter(Boolean);
-}
-
-/** Open Labeler requires videos plus labels CSV or a DLC project with bodyparts. */
-function canOpenLabeler(session: AppSession): boolean {
-  if (!session.videos?.length) return false;
-  if (session.human_labels_path || session.machine_labels_path) return true;
-  return !!(session.dlc_project_path && session.tracked_point_names.length);
 }
 
 /** Shown in header — saved filename or unsaved placeholder. */
@@ -158,6 +162,11 @@ export default function App() {
   if (!session) return <div className="app">Loading…</div>;
 
   const labeling = session.workflow_state === "labeling";
+  const guide = deriveWorkflowGuide(session);
+  const focusStep = guide.currentStepId;
+
+  const stepGroupClass = (steps: StepId[]) =>
+    steps.includes(focusStep as StepId) ? "action-group highlight" : "action-group";
 
   return (
     <div className="app">
@@ -177,6 +186,12 @@ export default function App() {
         <main>
           {error && <div className="error">{error}</div>}
           {jobProgress && <JobProgressBar progress={jobProgress} />}
+          {!labeling && (
+            <>
+              <WorkflowStepper guide={guide} />
+              <NextStepBanner nextStep={guide.nextStep} />
+            </>
+          )}
 
           {labeling ? (
             <LabelingCanvas
@@ -185,7 +200,7 @@ export default function App() {
             />
           ) : (
             <section className="panel actions">
-              <div className="action-group">
+              <div className={stepGroupClass(["videos"])}>
                 <h3>Videos</h3>
                 {session.videos?.length ? (
                   <ul className="video-list">
@@ -223,7 +238,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="action-group">
+              <div className={stepGroupClass(["dlc"])}>
                 <h3>DeepLabCut</h3>
                 <button
                   onClick={async () => {
@@ -247,40 +262,15 @@ export default function App() {
                 >
                   Create DLC Project
                 </button>
-                <button
-                  onClick={async () => {
-                    const p = await pathDialog.openDlcProject(
-                      "DLC project folder",
-                    );
-                    if (p) run(() => client.loadDlc(p));
-                  }}
-                >
-                  Load DLC Project
-                </button>
               </div>
 
-              <div className="action-group">
+              <div className={stepGroupClass(["label", "review"])}>
                 <h3>Labels</h3>
                 <p className="hint inline-hint">
-                  Import labels to resume, or open labeler to create/edit using
-                  bodyparts from your DLC project.
+                  Open labeler to create or edit frames using bodyparts from your
+                  DLC project. After analyze, press m in the labeler to overlay
+                  machine predictions.
                 </p>
-                <button
-                  onClick={async () => {
-                    const p = await pathDialog.openCsv("Human labels CSV");
-                    if (p) run(() => client.setHumanLabels(p));
-                  }}
-                >
-                  Import Human Labels
-                </button>
-                <button
-                  onClick={async () => {
-                    const p = await pathDialog.openCsv("Machine labels CSV");
-                    if (p) run(() => client.setMachineLabels(p));
-                  }}
-                >
-                  Import Machine Labels
-                </button>
                 <label className="checkbox">
                   <input
                     type="checkbox"
@@ -300,16 +290,59 @@ export default function App() {
                 </button>
                 {!canOpenLabeler(session) && (
                   <p className="hint inline-hint">
-                    Import Human or Machine labels, or load/create a DLC project
-                    to define bodyparts.
+                    Add videos plus labels or a DLC project with bodyparts.
                   </p>
                 )}
               </div>
 
-              <div className="action-group">
+              <details
+                className="resume-section"
+                open={guide.showResumeSection}
+              >
+                <summary>Resume / import</summary>
+                <div className="resume-section-body">
+                  <button
+                    onClick={async () => {
+                      const p = await pathDialog.openDlcProject(
+                        "DLC project folder",
+                      );
+                      if (p) run(() => client.loadDlc(p));
+                    }}
+                  >
+                    Load DLC Project
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const p = await pathDialog.openCsv("Human labels CSV");
+                      if (p) run(() => client.setHumanLabels(p));
+                    }}
+                  >
+                    Import Human Labels
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const p = await pathDialog.openCsv("Machine labels CSV");
+                      if (p) run(() => client.setMachineLabels(p));
+                    }}
+                  >
+                    Import Machine Labels
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const p = await pathDialog.openSessionJson();
+                      if (p) run(() => client.loadSession(p));
+                    }}
+                  >
+                    Load Session
+                  </button>
+                </div>
+              </details>
+
+              <div className={stepGroupClass(["train", "analyze"])}>
                 <h3>Train &amp; Analyze</h3>
                 <button
-                  disabled={!!session.active_job_id || !session.dlc_project_path}
+                  disabled={!canTrain(session)}
+                  title={trainBlockReason(session) ?? undefined}
                   onClick={async () => {
                     try {
                       const { job_id } = await client.train();
@@ -321,14 +354,14 @@ export default function App() {
                 >
                   Train Network
                 </button>
+                {!canTrain(session) && trainBlockReason(session) && (
+                  <p className="hint inline-hint">{trainBlockReason(session)}</p>
+                )}
                 <button
-                  disabled={!!session.active_job_id || !session.dlc_project_path}
+                  disabled={!canAnalyze(session)}
+                  title={analyzeBlockReason(session) ?? undefined}
                   onClick={async () => {
                     const paths = session.videos ?? [];
-                    if (!paths.length) {
-                      setError("Select videos before analyzing.");
-                      return;
-                    }
                     try {
                       const { job_id } = await client.analyze(paths, true);
                       await startJob(job_id, "Analyze Videos");
@@ -339,6 +372,9 @@ export default function App() {
                 >
                   Analyze Videos
                 </button>
+                {!canAnalyze(session) && analyzeBlockReason(session) && (
+                  <p className="hint inline-hint">{analyzeBlockReason(session)}</p>
+                )}
               </div>
 
               <div className="session-actions">
@@ -353,14 +389,6 @@ export default function App() {
                   }}
                 >
                   Save Session
-                </button>
-                <button
-                  onClick={async () => {
-                    const p = await pathDialog.openSessionJson();
-                    if (p) run(() => client.loadSession(p));
-                  }}
-                >
-                  Load Session
                 </button>
               </div>
             </section>
