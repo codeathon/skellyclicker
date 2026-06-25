@@ -290,10 +290,10 @@ def labeling_state():
 
 
 @app.get("/api/labeling/frame/{frame_number}")
-def labeling_frame(frame_number: int) -> Response:
+def labeling_frame(frame_number: int, preview: bool = False) -> Response:
 	if not store.labeling_engine:
 		raise HTTPException(status_code=400, detail="Labeler is not open")
-	jpeg = store.labeling_engine.render_frame_jpeg(frame_number)
+	jpeg = store.labeling_engine.render_frame_jpeg(frame_number, preview=preview)
 	return Response(content=jpeg, media_type="image/jpeg")
 
 

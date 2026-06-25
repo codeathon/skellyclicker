@@ -43,6 +43,7 @@ export interface LabelingState {
   tracked_points: string[];
   labeled_frames: number;
   show_machine_labels: boolean;
+  has_machine_labels: boolean;
   auto_next_point: boolean;
   grid_width: number;
   grid_height: number;
@@ -191,4 +192,20 @@ export const client = {
     ),
   getJob: (job_id: string) => api<BackgroundJob>(`/api/jobs/${job_id}`),
   frameUrl: (n: number) => `/api/labeling/frame/${n}?t=${Date.now()}`,
+  fetchFrameJpeg: async (
+    frame_number: number,
+    options?: { preview?: boolean; signal?: AbortSignal },
+  ): Promise<Blob> => {
+    const params = new URLSearchParams();
+    if (options?.preview) params.set("preview", "1");
+    params.set("t", String(Date.now()));
+    const res = await fetch(
+      `/api/labeling/frame/${frame_number}?${params}`,
+      { signal: options?.signal },
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to load frame ${frame_number}`);
+    }
+    return res.blob();
+  },
 };

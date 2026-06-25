@@ -17,17 +17,82 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
-	const sliderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const previewAbortRef = useRef<AbortController | null>(null);
+	const previewBlobRef = useRef<string | null>(null);
+	const scrubRafRef = useRef<number | null>(null);
+	const pendingPreviewFrameRef = useRef<number | null>(null);
+	const scrubbingRef = useRef(false);
 	// Prevent Esc / double-click from starting a second close while the save dialog is open.
 	const closingRef = useRef(false);
+	const [scrubbing, setScrubbing] = useState(false);
+
+	const revokePreviewBlob = useCallback(() => {
+		if (previewBlobRef.current) {
+			URL.revokeObjectURL(previewBlobRef.current);
+			previewBlobRef.current = null;
+		}
+	}, []);
+
+	const showFrameBlob = useCallback((blob: Blob) => {
+		revokePreviewBlob();
+		const url = URL.createObjectURL(blob);
+		previewBlobRef.current = url;
+		setImgSrc(url);
+	}, [revokePreviewBlob]);
 
 	const loadFrame = useCallback(async (frameNumber: number) => {
+		previewAbortRef.current?.abort();
 		const s = await client.setFrame(frameNumber);
 		frameRef.current = s.frame_number;
 		setSliderFrame(s.frame_number);
 		setState(s);
+		revokePreviewBlob();
 		setImgSrc(client.frameUrl(s.frame_number));
-	}, []);
+	}, [revokePreviewBlob]);
+
+	const previewFrame = useCallback(
+		async (frameNumber: number) => {
+			previewAbortRef.current?.abort();
+			const controller = new AbortController();
+			previewAbortRef.current = controller;
+			try {
+				const blob = await client.fetchFrameJpeg(frameNumber, {
+					preview: true,
+					signal: controller.signal,
+				});
+				if (controller.signal.aborted) return;
+				frameRef.current = frameNumber;
+				showFrameBlob(blob);
+			} catch (err) {
+				if (err instanceof DOMException && err.name === "AbortError") return;
+				setError(err instanceof Error ? err.message : String(err));
+			}
+		},
+		[showFrameBlob],
+	);
+
+	const schedulePreviewFrame = useCallback(
+		(frameNumber: number) => {
+			pendingPreviewFrameRef.current = frameNumber;
+			if (scrubRafRef.current != null) return;
+			scrubRafRef.current = requestAnimationFrame(() => {
+				scrubRafRef.current = null;
+				const pending = pendingPreviewFrameRef.current;
+				if (pending == null) return;
+				void previewFrame(pending);
+			});
+		},
+		[previewFrame],
+	);
+
+	const commitScrub = useCallback(
+		(frameNumber: number) => {
+			scrubbingRef.current = false;
+			setScrubbing(false);
+			void loadFrame(frameNumber).catch((err) => setError(String(err)));
+		},
+		[loadFrame],
+	);
 
 	const refresh = useCallback(async () => {
 		const s = await client.labelingState();
@@ -38,7 +103,12 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 
 	useEffect(() => {
 		refresh().catch((e) => setError(String(e)));
-	}, [refresh]);
+		return () => {
+			previewAbortRef.current?.abort();
+			if (scrubRafRef.current != null) cancelAnimationFrame(scrubRafRef.current);
+			revokePreviewBlob();
+		};
+	}, [refresh, revokePreviewBlob]);
 
 	useEffect(() => {
 		containerRef.current?.focus();
@@ -170,17 +240,20 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 		}
 	};
 
+	const onScrubStart = () => {
+		scrubbingRef.current = true;
+		setScrubbing(true);
+	};
+
 	const onSliderInput = (frameNumber: number) => {
 		setSliderFrame(frameNumber);
-		if (sliderDebounceRef.current) clearTimeout(sliderDebounceRef.current);
-		sliderDebounceRef.current = setTimeout(() => {
-			loadFrame(frameNumber).catch((err) => setError(String(err)));
-		}, 120);
+		if (scrubbingRef.current) {
+			schedulePreviewFrame(frameNumber);
+		}
 	};
 
 	const onSliderCommit = (frameNumber: number) => {
-		if (sliderDebounceRef.current) clearTimeout(sliderDebounceRef.current);
-		loadFrame(frameNumber).catch((err) => setError(String(err)));
+		commitScrub(frameNumber);
 	};
 
 	if (!state) return <p>Loading labeler…</p>;
@@ -236,7 +309,7 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 				>
 					Close without Saving
 				</button>
-				<span className="hint">a/d or ←/→ frames · m overlay · Esc close</span>
+				<span className="hint">a/d or ←/→ frames · drag slider to scrub · m overlay · Esc close</span>
 			</div>
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
@@ -244,10 +317,16 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			<div className="labeling-stage" ref={stageRef}>
 				<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
 			</div>
-			<div className="frame-scrubber">
+			<div className={`frame-scrubber${scrubbing ? " frame-scrubber--scrubbing" : ""}`}>
 				<label htmlFor="frame-slider">
-					Frame {state.frame_number + 1} / {state.frame_count}
+					Frame {sliderFrame + 1} / {state.frame_count}
 				</label>
+				{scrubbing && state.has_machine_labels && (
+					<p className="hint scrub-hint">Machine predictions shown while scrubbing</p>
+				)}
+				{scrubbing && !state.has_machine_labels && (
+					<p className="hint scrub-hint">Release slider to load full frame</p>
+				)}
 				<input
 					id="frame-slider"
 					type="range"
@@ -255,10 +334,11 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 					max={Math.max(0, state.frame_count - 1)}
 					value={sliderFrame}
 					disabled={isClosing}
+					onPointerDown={onScrubStart}
 					onInput={(e) => onSliderInput(Number(e.currentTarget.value))}
 					onChange={(e) => onSliderInput(Number(e.currentTarget.value))}
-					onMouseUp={(e) => onSliderCommit(Number(e.currentTarget.value))}
-					onTouchEnd={(e) => onSliderCommit(Number(e.currentTarget.value))}
+					onPointerUp={(e) => onSliderCommit(Number(e.currentTarget.value))}
+					onPointerCancel={(e) => onSliderCommit(Number(e.currentTarget.value))}
 				/>
 			</div>
 		</div>

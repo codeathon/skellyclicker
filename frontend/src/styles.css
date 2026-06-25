@@ -419,6 +419,16 @@ button:disabled {
   cursor: pointer;
 }
 
+.frame-scrubber--scrubbing input[type="range"] {
+  accent-color: #ffb86c;
+}
+
+.scrub-hint {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+  color: #ffb86c;
+}
+
 .workflow-stepper-wrap {
   margin-bottom: 1rem;
 }

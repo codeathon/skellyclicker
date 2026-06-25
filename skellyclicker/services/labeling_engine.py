@@ -59,13 +59,37 @@ class LabelingEngine(BaseModel):
 			self.frame_number,
 		)
 
-	def render_frame_jpeg(self, frame_number: int | None = None) -> bytes:
+	def render_frame_jpeg(
+		self,
+		frame_number: int | None = None,
+		*,
+		preview: bool = False,
+	) -> bytes:
+		"""Render grid as JPEG. Preview mode is for smooth scrubbing (lighter, machine overlay)."""
 		if frame_number is not None:
 			self.frame_number = frame_number
-			self.sync_active_point()
-		self.video_handler.show_machine_labels = self.show_machine_labels
-		image = self.video_handler.create_grid_image(self.frame_number)
-		ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+			if not preview:
+				self.sync_active_point()
+
+		prev_show = self.video_handler.show_machine_labels
+		try:
+			if preview:
+				# Scrub preview: show machine predictions when available, skip human overlays.
+				self.video_handler.show_machine_labels = (
+					self.video_handler.machine_labels_handler is not None
+				)
+			else:
+				self.video_handler.show_machine_labels = self.show_machine_labels
+			image = self.video_handler.create_grid_image(
+				self.frame_number,
+				annotate_images=not preview,
+			)
+		finally:
+			if preview:
+				self.video_handler.show_machine_labels = prev_show
+
+		quality = 55 if preview else 85
+		ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, quality])
 		if not ok:
 			raise RuntimeError("Failed to encode frame as JPEG")
 		return encoded.tobytes()
@@ -87,6 +111,7 @@ class LabelingEngine(BaseModel):
 			"tracked_points": handler.data_handler.config.tracked_point_names,
 			"labeled_frames": labeled,
 			"show_machine_labels": self.show_machine_labels,
+			"has_machine_labels": handler.machine_labels_handler is not None,
 			"auto_next_point": self.auto_next_point,
 			"grid_width": handler.grid_parameters.total_width,
 			"grid_height": handler.grid_parameters.total_height,
