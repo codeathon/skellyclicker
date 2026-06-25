@@ -7,6 +7,23 @@ interface Props {
 	onClose: (session: AppSession) => void;
 }
 
+/** Firefox reports aborted fetches as NetworkError, not AbortError. */
+function isIgnorableFetchError(err: unknown): boolean {
+	if (err instanceof DOMException) {
+		return err.name === "AbortError";
+	}
+	if (err instanceof TypeError) {
+		const msg = err.message.toLowerCase();
+		return msg.includes("networkerror") || msg.includes("aborted");
+	}
+	return false;
+}
+
+async function isJpegBlob(blob: Blob): Promise<boolean> {
+	const header = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+	return header[0] === 0xff && header[1] === 0xd8;
+}
+
 export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	const [state, setState] = useState<LabelingState | null>(null);
 	const [imgSrc, setImgSrc] = useState("");
@@ -17,11 +34,12 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
-	const previewAbortRef = useRef<AbortController | null>(null);
 	const previewBlobRef = useRef<string | null>(null);
 	const scrubRafRef = useRef<number | null>(null);
 	const pendingPreviewFrameRef = useRef<number | null>(null);
+	const previewBusyRef = useRef(false);
 	const scrubbingRef = useRef(false);
+	const previewGenRef = useRef(0);
 	// Prevent Esc / double-click from starting a second close while the save dialog is open.
 	const closingRef = useRef(false);
 	const [scrubbing, setScrubbing] = useState(false);
@@ -33,7 +51,8 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 		}
 	}, []);
 
-	const showFrameBlob = useCallback((blob: Blob) => {
+	const showFrameBlob = useCallback((blob: Blob, gen: number) => {
+		if (gen !== previewGenRef.current) return;
 		revokePreviewBlob();
 		const url = URL.createObjectURL(blob);
 		previewBlobRef.current = url;
@@ -41,35 +60,50 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	}, [revokePreviewBlob]);
 
 	const loadFrame = useCallback(async (frameNumber: number) => {
-		previewAbortRef.current?.abort();
+		previewGenRef.current += 1;
+		pendingPreviewFrameRef.current = null;
 		const s = await client.setFrame(frameNumber);
 		frameRef.current = s.frame_number;
 		setSliderFrame(s.frame_number);
 		setState(s);
+		const blob = await client.fetchFrameJpeg(s.frame_number);
+		if (!(await isJpegBlob(blob))) {
+			throw new Error(`Failed to load frame ${s.frame_number}`);
+		}
 		revokePreviewBlob();
-		setImgSrc(client.frameUrl(s.frame_number));
+		const url = URL.createObjectURL(blob);
+		previewBlobRef.current = url;
+		setImgSrc(url);
 	}, [revokePreviewBlob]);
 
-	const previewFrame = useCallback(
-		async (frameNumber: number) => {
-			previewAbortRef.current?.abort();
-			const controller = new AbortController();
-			previewAbortRef.current = controller;
-			try {
-				const blob = await client.fetchFrameJpeg(frameNumber, {
-					preview: true,
-					signal: controller.signal,
-				});
-				if (controller.signal.aborted) return;
-				frameRef.current = frameNumber;
-				showFrameBlob(blob);
-			} catch (err) {
-				if (err instanceof DOMException && err.name === "AbortError") return;
-				setError(err instanceof Error ? err.message : String(err));
+	const drainPreviewQueue = useCallback(async () => {
+		if (previewBusyRef.current) return;
+		previewBusyRef.current = true;
+		try {
+			while (pendingPreviewFrameRef.current != null && scrubbingRef.current) {
+				const frameNumber = pendingPreviewFrameRef.current;
+				pendingPreviewFrameRef.current = null;
+				const gen = ++previewGenRef.current;
+				try {
+					const blob = await client.fetchFrameJpeg(frameNumber, { preview: true });
+					if (!scrubbingRef.current || gen !== previewGenRef.current) continue;
+					if (!(await isJpegBlob(blob))) continue;
+					frameRef.current = frameNumber;
+					showFrameBlob(blob, gen);
+				} catch (err) {
+					if (isIgnorableFetchError(err)) continue;
+					if (gen !== previewGenRef.current) continue;
+					setError(err instanceof Error ? err.message : String(err));
+					return;
+				}
 			}
-		},
-		[showFrameBlob],
-	);
+		} finally {
+			previewBusyRef.current = false;
+			if (pendingPreviewFrameRef.current != null && scrubbingRef.current) {
+				void drainPreviewQueue();
+			}
+		}
+	}, [showFrameBlob]);
 
 	const schedulePreviewFrame = useCallback(
 		(frameNumber: number) => {
@@ -77,19 +111,22 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			if (scrubRafRef.current != null) return;
 			scrubRafRef.current = requestAnimationFrame(() => {
 				scrubRafRef.current = null;
-				const pending = pendingPreviewFrameRef.current;
-				if (pending == null) return;
-				void previewFrame(pending);
+				void drainPreviewQueue();
 			});
 		},
-		[previewFrame],
+		[drainPreviewQueue],
 	);
 
 	const commitScrub = useCallback(
 		(frameNumber: number) => {
 			scrubbingRef.current = false;
 			setScrubbing(false);
-			void loadFrame(frameNumber).catch((err) => setError(String(err)));
+			previewGenRef.current += 1;
+			pendingPreviewFrameRef.current = null;
+			void loadFrame(frameNumber).catch((err) => {
+				if (isIgnorableFetchError(err)) return;
+				setError(String(err));
+			});
 		},
 		[loadFrame],
 	);
@@ -98,13 +135,23 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 		const s = await client.labelingState();
 		frameRef.current = s.frame_number;
 		setState(s);
-		setImgSrc(client.frameUrl(s.frame_number));
-	}, []);
+		const blob = await client.fetchFrameJpeg(s.frame_number);
+		if (!(await isJpegBlob(blob))) {
+			throw new Error(`Failed to load frame ${s.frame_number}`);
+		}
+		revokePreviewBlob();
+		const url = URL.createObjectURL(blob);
+		previewBlobRef.current = url;
+		setImgSrc(url);
+	}, [revokePreviewBlob]);
 
 	useEffect(() => {
-		refresh().catch((e) => setError(String(e)));
+		refresh().catch((e) => {
+			if (!isIgnorableFetchError(e)) setError(String(e));
+		});
 		return () => {
-			previewAbortRef.current?.abort();
+			previewGenRef.current += 1;
+			pendingPreviewFrameRef.current = null;
 			if (scrubRafRef.current != null) cancelAnimationFrame(scrubRafRef.current);
 			revokePreviewBlob();
 		};
@@ -163,25 +210,41 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			if (key === "a" || key === "arrowleft") {
 				e.preventDefault();
 				const n = Math.max(0, frameRef.current - 1);
-				loadFrame(n).catch((err) => setError(String(err)));
+				loadFrame(n).catch((err) => {
+					if (isIgnorableFetchError(err)) return;
+					setError(String(err));
+				});
 				return;
 			}
 			if (key === "d" || key === "arrowright") {
 				e.preventDefault();
 				const n = Math.min(state.frame_count - 1, frameRef.current + 1);
-				loadFrame(n).catch((err) => setError(String(err)));
+				loadFrame(n).catch((err) => {
+					if (isIgnorableFetchError(err)) return;
+					setError(String(err));
+				});
 				return;
 			}
 			if (key === "m") {
 				e.preventDefault();
 				client
 					.toggleMachineOverlay()
-					.then((s) => {
+					.then(async (s) => {
 						frameRef.current = s.frame_number;
 						setState(s);
-						setImgSrc(client.frameUrl(s.frame_number));
+						const blob = await client.fetchFrameJpeg(s.frame_number);
+						if (!(await isJpegBlob(blob))) {
+							throw new Error(`Failed to load frame ${s.frame_number}`);
+						}
+						revokePreviewBlob();
+						const url = URL.createObjectURL(blob);
+						previewBlobRef.current = url;
+						setImgSrc(url);
 					})
-					.catch((err) => setError(String(err)));
+					.catch((err) => {
+						if (isIgnorableFetchError(err)) return;
+						setError(String(err));
+					});
 			}
 		};
 		window.addEventListener("keydown", onKey);
@@ -222,6 +285,12 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 		fitCanvasToStage();
 	};
 
+	const onImageError = () => {
+		// Ignore stale blob URLs while scrubbing or when a newer preview superseded this one.
+		if (scrubbingRef.current) return;
+		setError("Failed to load frame image");
+	};
+
 	const onClick = async (e: React.MouseEvent<HTMLCanvasElement>) => {
 		const canvas = canvasRef.current;
 		if (!canvas || !state || closingRef.current) return;
@@ -234,8 +303,16 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			const s = await client.click(x, y);
 			frameRef.current = s.frame_number;
 			setState(s);
-			setImgSrc(client.frameUrl(s.frame_number));
+			const blob = await client.fetchFrameJpeg(s.frame_number);
+			if (!(await isJpegBlob(blob))) {
+				throw new Error(`Failed to load frame ${s.frame_number}`);
+			}
+			revokePreviewBlob();
+			const url = URL.createObjectURL(blob);
+			previewBlobRef.current = url;
+			setImgSrc(url);
 		} catch (err) {
+			if (isIgnorableFetchError(err)) return;
 			setError(err instanceof Error ? err.message : String(err));
 		}
 	};
@@ -277,14 +354,24 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 					<button
 						type="button"
 						disabled={state.frame_number <= 0 || isClosing}
-						onClick={() => loadFrame(state.frame_number - 1).catch((e) => setError(String(e)))}
+						onClick={() =>
+							loadFrame(state.frame_number - 1).catch((e) => {
+								if (isIgnorableFetchError(e)) return;
+								setError(String(e));
+							})
+						}
 					>
 						← Prev
 					</button>
 					<button
 						type="button"
 						disabled={state.frame_number >= state.frame_count - 1 || isClosing}
-						onClick={() => loadFrame(state.frame_number + 1).catch((e) => setError(String(e)))}
+						onClick={() =>
+							loadFrame(state.frame_number + 1).catch((e) => {
+								if (isIgnorableFetchError(e)) return;
+								setError(String(e));
+							})
+						}
 					>
 						Next →
 					</button>
@@ -313,7 +400,14 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			</div>
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
-			<img id="label-img" src={imgSrc} alt="" hidden onLoad={onImageLoad} />
+			<img
+				id="label-img"
+				src={imgSrc}
+				alt=""
+				hidden
+				onLoad={onImageLoad}
+				onError={onImageError}
+			/>
 			<div className="labeling-stage" ref={stageRef}>
 				<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
 			</div>

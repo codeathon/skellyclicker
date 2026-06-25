@@ -221,7 +221,12 @@ export const client = {
       { signal: options?.signal },
     );
     if (!res.ok) {
-      throw new Error(`Failed to load frame ${frame_number}`);
+      const detail = await res.text().catch(() => "");
+      throw new Error(detail || `Failed to load frame ${frame_number}`);
+    }
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.includes("image/jpeg")) {
+      throw new Error(`Unexpected frame response (${contentType || "no content-type"})`);
     }
     return res.blob();
   },
