@@ -262,6 +262,16 @@ export default function App() {
                 >
                   Create DLC Project
                 </button>
+                <button
+                  onClick={async () => {
+                    const p = await pathDialog.openDlcProject(
+                      "DLC project folder",
+                    );
+                    if (p) run(() => client.loadDlc(p));
+                  }}
+                >
+                  Load DLC Project
+                </button>
               </div>
 
               <div className={stepGroupClass(["label", "review"])}>
@@ -301,16 +311,6 @@ export default function App() {
               >
                 <summary>Resume / import</summary>
                 <div className="resume-section-body">
-                  <button
-                    onClick={async () => {
-                      const p = await pathDialog.openDlcProject(
-                        "DLC project folder",
-                      );
-                      if (p) run(() => client.loadDlc(p));
-                    }}
-                  >
-                    Load DLC Project
-                  </button>
                   <button
                     onClick={async () => {
                       const p = await pathDialog.openCsv("Human labels CSV");

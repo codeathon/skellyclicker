@@ -102,7 +102,7 @@ const NEXT_COPY: Record<StepId, { title: string; detail: string }> = {
 	},
 	dlc: {
 		title: "Create a DLC project",
-		detail: "Create a new project or load an existing one from Resume / import below.",
+		detail: "Create a new project or load an existing one below.",
 	},
 	label: {
 		title: "Label frames",
