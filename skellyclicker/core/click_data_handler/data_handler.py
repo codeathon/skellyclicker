@@ -7,6 +7,7 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict
 
 from skellyclicker import VideoNameString, PointNameString
+from skellyclicker.core.session_validation import bodypart_names_from_csv_columns
 from skellyclicker.core.video_handler.video_models import ClickData, VideoPlaybackState, VideoMetadata, \
     VideoScalingParameters
 
@@ -33,17 +34,12 @@ class DataHandlerConfig(BaseModel):
 
     @classmethod
     def from_dataframe(cls, dataframe: pd.DataFrame):
-        tracked_point_names = []
-        seen = set()
-        for name in dataframe.columns:
-            name = name.removesuffix("_x").removesuffix("_y")
-            if name not in seen:
-                seen.add(name)
-                tracked_point_names.append(name)
-        tracked_point_names = list(tracked_point_names)
+        tracked_point_names = bodypart_names_from_csv_columns(list(dataframe.columns))
         logger.debug(f"Found tracked point names in dataframe: {tracked_point_names}")
+        frame_vals = dataframe.index.get_level_values("frame")
+        num_frames = int(frame_vals.max()) + 1 if len(frame_vals) else 1
         return cls(
-            num_frames=dataframe.index.get_level_values("frame").max(),
+            num_frames=num_frames,
             video_names=sorted(dataframe.index.get_level_values("video").unique().tolist()),
             tracked_point_names=tracked_point_names,
         )
@@ -68,16 +64,57 @@ class DataHandler(BaseModel):
         )
 
     @classmethod
-    def from_csv(cls, input_path: str | Path):
-        dataframe = pd.read_csv(input_path)
-        dataframe["video"] = dataframe["video"].astype(str)
-        dataframe = dataframe.set_index(["video", "frame"])
+    def from_csv(
+        cls,
+        input_path: str | Path,
+        *,
+        video_names: list[str] | None = None,
+        num_frames: int | None = None,
+        tracked_point_names: list[str] | None = None,
+    ):
+        raw = pd.read_csv(input_path)
+        raw["video"] = raw["video"].astype(str)
+        csv_bodyparts = bodypart_names_from_csv_columns(list(raw.columns))
+        sparse = raw.set_index(["video", "frame"])
 
-        config = DataHandlerConfig.from_dataframe(dataframe)
+        if tracked_point_names:
+            # Keep DLC/session bodypart order; append any extras found in the CSV.
+            names = list(tracked_point_names)
+            for bp in csv_bodyparts:
+                if bp not in names:
+                    names.append(bp)
+        else:
+            names = csv_bodyparts
+
+        if not names:
+            raise ValueError(f"No bodyparts found in labels CSV: {input_path}")
+
+        if video_names is None:
+            video_names = sorted(sparse.index.get_level_values("video").unique().tolist())
+        if num_frames is None:
+            frame_vals = sparse.index.get_level_values("frame")
+            num_frames = int(frame_vals.max()) + 1 if len(frame_vals) else 1
+
+        config = DataHandlerConfig(
+            num_frames=num_frames,
+            video_names=video_names,
+            tracked_point_names=names,
+        )
+        dataframe = cls._create_dataframe(config)
+        for col in sparse.columns:
+            if col not in dataframe.columns:
+                continue
+            for idx in sparse.index:
+                if idx not in dataframe.index:
+                    continue
+                val = sparse.at[idx, col]
+                if pd.notna(val):
+                    dataframe.at[idx, col] = val
+
         return cls(
             config=config,
             dataframe=dataframe,
-            active_point=config.tracked_point_names[0],
+            active_point=names[0],
         )
 
     @staticmethod
@@ -115,6 +152,26 @@ class DataHandler(BaseModel):
         )
         self.active_point = self.config.tracked_point_names[new_position]
         logger.debug(f"Active point set to {self.active_point}")
+
+    def point_is_labeled(self, video_index: int, frame_number: int, point_name: str) -> bool:
+        video_name = self.config.video_names[video_index]
+        try:
+            row = self.dataframe.loc[(video_name, frame_number)]
+        except KeyError:
+            return False
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        x = row[f"{point_name}_x"]
+        y = row[f"{point_name}_y"]
+        return bool(pd.notna(x) and pd.notna(y))
+
+    def reset_active_point_for_frame(self, frame_number: int, video_index: int = 0) -> None:
+        """Select first unlabeled bodypart on this frame, or the first bodypart when fresh."""
+        for name in self.config.tracked_point_names:
+            if not self.point_is_labeled(video_index, frame_number, name):
+                self.active_point = name
+                return
+        self.active_point = self.config.tracked_point_names[0]
 
     def update_dataframe(self, click_data: ClickData, point_name: str | None = None):
         video_name = self.config.video_names[click_data.video_index]

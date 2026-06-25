@@ -63,7 +63,13 @@ class VideoHandler(BaseModel):
                 )
             )
         elif data_handler_path and Path(data_handler_path).suffix == ".csv":
-            data_handler = DataHandler.from_csv(data_handler_path)
+            resolved_video_names = sorted(v.name for v in videos.values())
+            data_handler = DataHandler.from_csv(
+                data_handler_path,
+                video_names=resolved_video_names,
+                num_frames=frame_count,
+                tracked_point_names=tracked_point_names,
+            )
         elif tracked_point_names:
             # Empty click grid from session/DLC bodyparts — no tracked_points.json file.
             data_handler = DataHandler.from_config(
@@ -79,7 +85,12 @@ class VideoHandler(BaseModel):
             )
 
         if machine_labels_path:
-            machine_labels_handler = DataHandler.from_csv(machine_labels_path)
+            machine_labels_handler = DataHandler.from_csv(
+                machine_labels_path,
+                video_names=sorted(v.name for v in videos.values()),
+                num_frames=frame_count,
+                tracked_point_names=data_handler.config.tracked_point_names,
+            )
             machine_labels_annotator = ImageAnnotator(
                 config=ImageAnnotatorConfig(
                     marker_type=cv2.MARKER_CROSS,

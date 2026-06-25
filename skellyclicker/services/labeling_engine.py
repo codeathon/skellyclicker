@@ -46,14 +46,23 @@ class LabelingEngine(BaseModel):
 			video_paths=video_paths,
 			max_window_size=MAX_WINDOW_SIZE,
 			data_handler_path=primary_csv,
-			tracked_point_names=bodyparts,
+			tracked_point_names=list(tracked_point_names) if tracked_point_names else None,
 			machine_labels_path=overlay,
 		)
-		return cls(video_handler=handler)
+		engine = cls(video_handler=handler)
+		engine.sync_active_point()
+		return engine
+
+	def sync_active_point(self) -> None:
+		"""Align active bodypart with the current frame before labeling."""
+		self.video_handler.data_handler.reset_active_point_for_frame(
+			self.frame_number,
+		)
 
 	def render_frame_jpeg(self, frame_number: int | None = None) -> bytes:
 		if frame_number is not None:
 			self.frame_number = frame_number
+			self.sync_active_point()
 		self.video_handler.show_machine_labels = self.show_machine_labels
 		image = self.video_handler.create_grid_image(self.frame_number)
 		ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85])
