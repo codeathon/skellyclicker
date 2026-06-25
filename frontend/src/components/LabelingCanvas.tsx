@@ -26,7 +26,6 @@ async function isJpegBlob(blob: Blob): Promise<boolean> {
 
 export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	const [state, setState] = useState<LabelingState | null>(null);
-	const [imgSrc, setImgSrc] = useState("");
 	const [sliderFrame, setSliderFrame] = useState(0);
 	const [error, setError] = useState<string | null>(null);
 	const [isClosing, setIsClosing] = useState(false);
@@ -34,7 +33,6 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
-	const previewBlobRef = useRef<string | null>(null);
 	const scrubRafRef = useRef<number | null>(null);
 	const pendingPreviewFrameRef = useRef<number | null>(null);
 	const previewBusyRef = useRef(false);
@@ -44,37 +42,74 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	const closingRef = useRef(false);
 	const [scrubbing, setScrubbing] = useState(false);
 
-	const revokePreviewBlob = useCallback(() => {
-		if (previewBlobRef.current) {
-			URL.revokeObjectURL(previewBlobRef.current);
-			previewBlobRef.current = null;
-		}
+	const fitCanvasToStage = useCallback(() => {
+		const stage = stageRef.current;
+		const canvas = canvasRef.current;
+		if (!stage || !canvas || canvas.width <= 0 || canvas.height <= 0) return;
+
+		const maxW = stage.clientWidth;
+		const maxH = stage.clientHeight;
+		if (maxW <= 0 || maxH <= 0) return;
+
+		const scale = Math.min(maxW / canvas.width, maxH / canvas.height);
+		canvas.style.width = `${Math.floor(canvas.width * scale)}px`;
+		canvas.style.height = `${Math.floor(canvas.height * scale)}px`;
 	}, []);
 
-	const showFrameBlob = useCallback((blob: Blob, gen: number) => {
-		if (gen !== previewGenRef.current) return;
-		revokePreviewBlob();
-		const url = URL.createObjectURL(blob);
-		previewBlobRef.current = url;
-		setImgSrc(url);
-	}, [revokePreviewBlob]);
+	const paintFrameBlob = useCallback(
+		async (blob: Blob, gen: number) => {
+			if (gen !== previewGenRef.current) return;
+			try {
+				const bitmap = await createImageBitmap(blob);
+				if (gen !== previewGenRef.current) {
+					bitmap.close();
+					return;
+				}
+				const canvas = canvasRef.current;
+				if (!canvas) {
+					bitmap.close();
+					return;
+				}
+				canvas.width = bitmap.width;
+				canvas.height = bitmap.height;
+				const ctx = canvas.getContext("2d");
+				if (ctx) ctx.drawImage(bitmap, 0, 0);
+				bitmap.close();
+				fitCanvasToStage();
+				setError(null);
+			} catch (err) {
+				if (gen !== previewGenRef.current) return;
+				setError(err instanceof Error ? err.message : String(err));
+			}
+		},
+		[fitCanvasToStage],
+	);
 
-	const loadFrame = useCallback(async (frameNumber: number) => {
-		previewGenRef.current += 1;
-		pendingPreviewFrameRef.current = null;
-		const s = await client.setFrame(frameNumber);
-		frameRef.current = s.frame_number;
-		setSliderFrame(s.frame_number);
-		setState(s);
-		const blob = await client.fetchFrameJpeg(s.frame_number);
-		if (!(await isJpegBlob(blob))) {
-			throw new Error(`Failed to load frame ${s.frame_number}`);
-		}
-		revokePreviewBlob();
-		const url = URL.createObjectURL(blob);
-		previewBlobRef.current = url;
-		setImgSrc(url);
-	}, [revokePreviewBlob]);
+	const fetchAndPaintFrame = useCallback(
+		async (frameNumber: number, preview: boolean, gen: number) => {
+			const blob = await client.fetchFrameJpeg(frameNumber, preview ? { preview: true } : undefined);
+			if (gen !== previewGenRef.current) return;
+			if (!(await isJpegBlob(blob))) {
+				throw new Error(`Failed to load frame ${frameNumber}`);
+			}
+			await paintFrameBlob(blob, gen);
+		},
+		[paintFrameBlob],
+	);
+
+	const loadFrame = useCallback(
+		async (frameNumber: number) => {
+			const gen = ++previewGenRef.current;
+			pendingPreviewFrameRef.current = null;
+			const s = await client.setFrame(frameNumber);
+			if (gen !== previewGenRef.current) return;
+			frameRef.current = s.frame_number;
+			setSliderFrame(s.frame_number);
+			setState(s);
+			await fetchAndPaintFrame(s.frame_number, false, gen);
+		},
+		[fetchAndPaintFrame],
+	);
 
 	const drainPreviewQueue = useCallback(async () => {
 		if (previewBusyRef.current) return;
@@ -85,11 +120,10 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 				pendingPreviewFrameRef.current = null;
 				const gen = ++previewGenRef.current;
 				try {
-					const blob = await client.fetchFrameJpeg(frameNumber, { preview: true });
-					if (!scrubbingRef.current || gen !== previewGenRef.current) continue;
-					if (!(await isJpegBlob(blob))) continue;
-					frameRef.current = frameNumber;
-					showFrameBlob(blob, gen);
+					await fetchAndPaintFrame(frameNumber, true, gen);
+					if (scrubbingRef.current && gen === previewGenRef.current) {
+						frameRef.current = frameNumber;
+					}
 				} catch (err) {
 					if (isIgnorableFetchError(err)) continue;
 					if (gen !== previewGenRef.current) continue;
@@ -103,7 +137,7 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 				void drainPreviewQueue();
 			}
 		}
-	}, [showFrameBlob]);
+	}, [fetchAndPaintFrame]);
 
 	const schedulePreviewFrame = useCallback(
 		(frameNumber: number) => {
@@ -132,18 +166,14 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	);
 
 	const refresh = useCallback(async () => {
+		const gen = ++previewGenRef.current;
 		const s = await client.labelingState();
+		if (gen !== previewGenRef.current) return;
 		frameRef.current = s.frame_number;
+		setSliderFrame(s.frame_number);
 		setState(s);
-		const blob = await client.fetchFrameJpeg(s.frame_number);
-		if (!(await isJpegBlob(blob))) {
-			throw new Error(`Failed to load frame ${s.frame_number}`);
-		}
-		revokePreviewBlob();
-		const url = URL.createObjectURL(blob);
-		previewBlobRef.current = url;
-		setImgSrc(url);
-	}, [revokePreviewBlob]);
+		await fetchAndPaintFrame(s.frame_number, false, gen);
+	}, [fetchAndPaintFrame]);
 
 	useEffect(() => {
 		refresh().catch((e) => {
@@ -153,19 +183,20 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			previewGenRef.current += 1;
 			pendingPreviewFrameRef.current = null;
 			if (scrubRafRef.current != null) cancelAnimationFrame(scrubRafRef.current);
-			revokePreviewBlob();
 		};
-	}, [refresh, revokePreviewBlob]);
+	}, [refresh]);
 
 	useEffect(() => {
 		containerRef.current?.focus();
 	}, [state?.session_id]);
 
 	useEffect(() => {
-		const img = document.getElementById("label-img") as HTMLImageElement | null;
-		if (!img || !imgSrc) return;
-		img.src = imgSrc;
-	}, [imgSrc]);
+		const stage = stageRef.current;
+		if (!stage) return;
+		const observer = new ResizeObserver(() => fitCanvasToStage());
+		observer.observe(stage);
+		return () => observer.disconnect();
+	}, [fitCanvasToStage, state?.session_id]);
 
 	const closeLabeler = useCallback(
 		async (save: boolean) => {
@@ -176,12 +207,10 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			try {
 				let savePath: string | undefined;
 				if (save) {
-					// Re-save to the same CSV when updating labels — skips a slow file dialog round-trip.
 					if (humanLabelsPath) {
 						savePath = humanLabelsPath;
 					} else {
 						const picked = await pathDialog.saveCsvForLabeler();
-						// Cancelled save dialog → default path under the video folder on the server.
 						savePath = picked ?? undefined;
 					}
 				}
@@ -227,19 +256,14 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			}
 			if (key === "m") {
 				e.preventDefault();
+				const gen = ++previewGenRef.current;
 				client
 					.toggleMachineOverlay()
 					.then(async (s) => {
+						if (gen !== previewGenRef.current) return;
 						frameRef.current = s.frame_number;
 						setState(s);
-						const blob = await client.fetchFrameJpeg(s.frame_number);
-						if (!(await isJpegBlob(blob))) {
-							throw new Error(`Failed to load frame ${s.frame_number}`);
-						}
-						revokePreviewBlob();
-						const url = URL.createObjectURL(blob);
-						previewBlobRef.current = url;
-						setImgSrc(url);
+						await fetchAndPaintFrame(s.frame_number, false, gen);
 					})
 					.catch((err) => {
 						if (isIgnorableFetchError(err)) return;
@@ -249,47 +273,7 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [state, closeLabeler, loadFrame]);
-
-	const fitCanvasToStage = useCallback(() => {
-		const stage = stageRef.current;
-		const canvas = canvasRef.current;
-		const img = document.getElementById("label-img") as HTMLImageElement | null;
-		if (!stage || !canvas || !img?.naturalWidth || !img.naturalHeight) return;
-
-		const maxW = stage.clientWidth;
-		const maxH = stage.clientHeight;
-		if (maxW <= 0 || maxH <= 0) return;
-
-		const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
-		canvas.style.width = `${Math.floor(img.naturalWidth * scale)}px`;
-		canvas.style.height = `${Math.floor(img.naturalHeight * scale)}px`;
-	}, []);
-
-	useEffect(() => {
-		const stage = stageRef.current;
-		if (!stage) return;
-		const observer = new ResizeObserver(() => fitCanvasToStage());
-		observer.observe(stage);
-		return () => observer.disconnect();
-	}, [fitCanvasToStage, state?.session_id]);
-
-	const onImageLoad = () => {
-		const canvas = canvasRef.current;
-		const img = document.getElementById("label-img") as HTMLImageElement;
-		if (!canvas || !img) return;
-		canvas.width = img.naturalWidth;
-		canvas.height = img.naturalHeight;
-		const ctx = canvas.getContext("2d");
-		if (ctx) ctx.drawImage(img, 0, 0);
-		fitCanvasToStage();
-	};
-
-	const onImageError = () => {
-		// Ignore stale blob URLs while scrubbing or when a newer preview superseded this one.
-		if (scrubbingRef.current) return;
-		setError("Failed to load frame image");
-	};
+	}, [state, closeLabeler, loadFrame, fetchAndPaintFrame]);
 
 	const onClick = async (e: React.MouseEvent<HTMLCanvasElement>) => {
 		const canvas = canvasRef.current;
@@ -299,18 +283,13 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 		const scaleY = canvas.height / rect.height;
 		const x = Math.round((e.clientX - rect.left) * scaleX);
 		const y = Math.round((e.clientY - rect.top) * scaleY);
+		const gen = ++previewGenRef.current;
 		try {
 			const s = await client.click(x, y);
+			if (gen !== previewGenRef.current) return;
 			frameRef.current = s.frame_number;
 			setState(s);
-			const blob = await client.fetchFrameJpeg(s.frame_number);
-			if (!(await isJpegBlob(blob))) {
-				throw new Error(`Failed to load frame ${s.frame_number}`);
-			}
-			revokePreviewBlob();
-			const url = URL.createObjectURL(blob);
-			previewBlobRef.current = url;
-			setImgSrc(url);
+			await fetchAndPaintFrame(s.frame_number, false, gen);
 		} catch (err) {
 			if (isIgnorableFetchError(err)) return;
 			setError(err instanceof Error ? err.message : String(err));
@@ -320,6 +299,7 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	const onScrubStart = () => {
 		scrubbingRef.current = true;
 		setScrubbing(true);
+		setError(null);
 	};
 
 	const onSliderInput = (frameNumber: number) => {
@@ -400,14 +380,6 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			</div>
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
-			<img
-				id="label-img"
-				src={imgSrc}
-				alt=""
-				hidden
-				onLoad={onImageLoad}
-				onError={onImageError}
-			/>
 			<div className="labeling-stage" ref={stageRef}>
 				<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
 			</div>

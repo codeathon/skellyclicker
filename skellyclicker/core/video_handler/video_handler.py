@@ -317,22 +317,23 @@ class VideoHandler(BaseModel):
                             video_index=video_index, frame_number=frame_number
                         ),
                     )
-                    if (
-                        self.show_machine_labels
-                        and self.machine_labels_path
-                    ):
-                        self.ensure_machine_labels_loaded()
-                    if (
-                        self.show_machine_labels
-                        and self.machine_labels_handler is not None
-                        and self.machine_labels_annotator is not None
-                    ):
-                        image = self.machine_labels_annotator.annotate_single_image(
-                            image,
-                            click_data=self.machine_labels_handler.get_data_by_video_frame(
-                                video_index=video_index, frame_number=frame_number
-                            ),
-                        )
+                # Machine overlay is shown during scrub preview (annotate_images=False).
+                if (
+                    self.show_machine_labels
+                    and self.machine_labels_path
+                ):
+                    self.ensure_machine_labels_loaded()
+                if (
+                    self.show_machine_labels
+                    and self.machine_labels_handler is not None
+                    and self.machine_labels_annotator is not None
+                ):
+                    image = self.machine_labels_annotator.annotate_single_image(
+                        image,
+                        click_data=self.machine_labels_handler.get_data_by_video_frame(
+                            video_index=video_index, frame_number=frame_number
+                        ),
+                    )
 
                 if zoom_state.scale > 1.0:
                     # Calculate zoomed dimensions
