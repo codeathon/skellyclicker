@@ -135,6 +135,48 @@ class SessionStore:
 		self.session.workflow_state = WorkflowState.review
 		return self.session
 
+	@staticmethod
+	def _validate_training_int(name: str, value: int, *, minimum: int = 1, maximum: int = 1000) -> int:
+		"""Match legacy Tk spinbox bounds (1–1000) for training hyperparameters."""
+		if value < minimum:
+			raise SessionError(f"{name} must be at least {minimum}")
+		if value > maximum:
+			raise SessionError(f"{name} must be at most {maximum}")
+		return value
+
+	def set_training_settings(
+		self,
+		*,
+		epochs: int | None = None,
+		save_epochs: int | None = None,
+		batch_size: int | None = None,
+	) -> AppSession:
+		"""Update DLC training hyperparameters stored on the session."""
+		if epochs is not None:
+			self.session.training_epochs = self._validate_training_int("Epochs", epochs)
+		if save_epochs is not None:
+			self.session.training_save_epochs = self._validate_training_int(
+				"Save epochs", save_epochs
+			)
+		if batch_size is not None:
+			self.session.training_batch_size = self._validate_training_int(
+				"Batch size", batch_size
+			)
+		return self.session
+
+	def set_analyze_options(
+		self,
+		*,
+		filter_predictions: bool | None = None,
+		annotate_videos: bool | None = None,
+	) -> AppSession:
+		"""Update analyze-time options (filter CSV, annotated output videos)."""
+		if filter_predictions is not None:
+			self.session.filter_predictions = filter_predictions
+		if annotate_videos is not None:
+			self.session.annotate_videos = annotate_videos
+		return self.session
+
 	def _can_open_labeler(self) -> bool:
 		"""Labeler needs videos plus imported labels or a DLC project with bodyparts."""
 		if not self.session.videos:

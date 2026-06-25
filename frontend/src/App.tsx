@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppSession, client } from "./api/client";
 import { pathDialog } from "./api/pathDialog";
+import { DlcSettings } from "./components/DlcSettings";
 import { JobProgressBar, JobProgressState } from "./components/JobProgressBar";
 import { LabelingCanvas } from "./components/LabelingCanvas";
 import { LoadedAssets } from "./components/LoadedAssets";
@@ -40,6 +41,7 @@ function sessionLabel(session: AppSession): string {
 export default function App() {
   const [session, setSession] = useState<AppSession | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [openingLabeler, setOpeningLabeler] = useState(false);
   const [jobProgress, setJobProgress] = useState<JobProgressState | null>(null);
   const watchedJobRef = useRef<string | null>(null);
   const hideJobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -301,10 +303,17 @@ export default function App() {
                   Train on machine labels
                 </label>
                 <button
-                  disabled={!canOpenLabeler(session)}
-                  onClick={() => run(client.openLabeler)}
+                  disabled={!canOpenLabeler(session) || openingLabeler}
+                  onClick={async () => {
+                    setOpeningLabeler(true);
+                    try {
+                      await run(client.openLabeler);
+                    } finally {
+                      setOpeningLabeler(false);
+                    }
+                  }}
                 >
-                  Open Labeler
+                  {openingLabeler ? "Opening labeler…" : "Open Labeler"}
                 </button>
                 {!canOpenLabeler(session) && (
                   <p className="hint inline-hint">
@@ -340,6 +349,7 @@ export default function App() {
 
               <div className={stepGroupClass(["train", "analyze"])}>
                 <h3>Train &amp; Analyze</h3>
+                <DlcSettings session={session} onUpdate={run} />
                 <button
                   disabled={!canTrain(session)}
                   title={trainBlockReason(session) ?? undefined}

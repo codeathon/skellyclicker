@@ -36,6 +36,7 @@ class VideoHandler(BaseModel):
     image_annotator: ImageAnnotator = ImageAnnotator()
     frame_count: int
     show_machine_labels: bool = False
+    machine_labels_path: str | None = None
     machine_labels_handler: DataHandler | None
     machine_labels_annotator: ImageAnnotator | None
 
@@ -85,22 +86,11 @@ class VideoHandler(BaseModel):
             )
 
         if machine_labels_path:
-            machine_labels_handler = DataHandler.from_csv(
-                machine_labels_path,
-                video_names=sorted(v.name for v in videos.values()),
-                num_frames=frame_count,
-                tracked_point_names=data_handler.config.tracked_point_names,
-            )
-            machine_labels_annotator = ImageAnnotator(
-                config=ImageAnnotatorConfig(
-                    marker_type=cv2.MARKER_CROSS,
-                    marker_size=10,
-                    marker_thickness=1,
-                    tracked_points=data_handler.config.tracked_point_names,
-                    show_clicks=False,
-                )
-            )
+            # Defer parsing dense post-analyze CSVs until overlay is actually shown.
+            machine_labels_handler = None
+            machine_labels_annotator = None
         else:
+            machine_labels_path = None
             machine_labels_handler = None
             machine_labels_annotator = None
 
@@ -125,8 +115,31 @@ class VideoHandler(BaseModel):
             frame_count=frame_count,
             image_annotator=image_annotator,
             show_machine_labels=False,
+            machine_labels_path=machine_labels_path,
             machine_labels_handler=machine_labels_handler,
             machine_labels_annotator=machine_labels_annotator,
+        )
+
+    def ensure_machine_labels_loaded(self) -> None:
+        """Parse machine-label CSV on first overlay use (skipped at labeler open)."""
+        if self.machine_labels_handler is not None or not self.machine_labels_path:
+            return
+        video_names = sorted(v.name for v in self.videos.values())
+        handler = DataHandler.from_csv_overlay(
+            self.machine_labels_path,
+            video_names=video_names,
+            num_frames=self.frame_count,
+            tracked_point_names=self.data_handler.config.tracked_point_names,
+        )
+        self.machine_labels_handler = handler
+        self.machine_labels_annotator = ImageAnnotator(
+            config=ImageAnnotatorConfig(
+                marker_type=cv2.MARKER_CROSS,
+                marker_size=10,
+                marker_thickness=1,
+                tracked_points=self.data_handler.config.tracked_point_names,
+                show_clicks=False,
+            )
         )
 
     @classmethod
@@ -258,6 +271,7 @@ class VideoHandler(BaseModel):
     def copy_frame_data_from_machine_labels(
         self, frame_number: int, video_index: int
     ) -> None:
+        self.ensure_machine_labels_loaded()
         if self.machine_labels_handler is not None:
             machine_labels_data = self.machine_labels_handler.get_data_by_video_frame(
                     video_index=video_index, frame_number=frame_number
@@ -303,6 +317,11 @@ class VideoHandler(BaseModel):
                             video_index=video_index, frame_number=frame_number
                         ),
                     )
+                    if (
+                        self.show_machine_labels
+                        and self.machine_labels_path
+                    ):
+                        self.ensure_machine_labels_loaded()
                     if (
                         self.show_machine_labels
                         and self.machine_labels_handler is not None

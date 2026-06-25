@@ -67,3 +67,38 @@ def test_click_sequence_starts_with_first_bodypart():
 	handler.update_dataframe(click)
 	handler.move_active_point_by_index(1)
 	assert handler.active_point == "tail_base"
+
+
+def test_from_csv_dense_merge_matches_sparse_rows(tmp_path):
+	"""Vectorized merge must preserve labeled coordinates on dense DLC-style CSVs."""
+	csv_path = tmp_path / "dense.csv"
+	lines = ["video,frame,nose_x,nose_y"]
+	for frame in range(200):
+		lines.append(f"cam0.mp4,{frame},{frame}.5,{frame}.25")
+	csv_path.write_text("\n".join(lines) + "\n")
+
+	handler = DataHandler.from_csv(
+		csv_path,
+		video_names=["cam0.mp4"],
+		num_frames=200,
+		tracked_point_names=["nose"],
+	)
+	data = handler.get_data_by_video_frame(0, 42)
+	assert data["nose"].video_x == 42
+	assert data["nose"].video_y == 42
+
+
+def test_from_csv_overlay_skips_empty_frames(tmp_path):
+	csv_path = tmp_path / "machine.csv"
+	csv_path.write_text(
+		"video,frame,nose_x,nose_y\n"
+		"cam0.mp4,5,10.0,20.0\n"
+	)
+	handler = DataHandler.from_csv_overlay(
+		csv_path,
+		video_names=["cam0.mp4"],
+		num_frames=100,
+		tracked_point_names=["nose"],
+	)
+	assert handler.get_data_by_video_frame(0, 5)["nose"].video_x == 10
+	assert handler.get_data_by_video_frame(0, 0) == {}

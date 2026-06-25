@@ -75,9 +75,11 @@ class LabelingEngine(BaseModel):
 		try:
 			if preview:
 				# Scrub preview: show machine predictions when available, skip human overlays.
-				self.video_handler.show_machine_labels = (
-					self.video_handler.machine_labels_handler is not None
+				self.video_handler.show_machine_labels = bool(
+					self.video_handler.machine_labels_path
 				)
+				if self.video_handler.show_machine_labels:
+					self.video_handler.ensure_machine_labels_loaded()
 			else:
 				self.video_handler.show_machine_labels = self.show_machine_labels
 			image = self.video_handler.create_grid_image(
@@ -111,7 +113,7 @@ class LabelingEngine(BaseModel):
 			"tracked_points": handler.data_handler.config.tracked_point_names,
 			"labeled_frames": labeled,
 			"show_machine_labels": self.show_machine_labels,
-			"has_machine_labels": handler.machine_labels_handler is not None,
+			"has_machine_labels": bool(handler.machine_labels_path),
 			"auto_next_point": self.auto_next_point,
 			"grid_width": handler.grid_parameters.total_width,
 			"grid_height": handler.grid_parameters.total_height,

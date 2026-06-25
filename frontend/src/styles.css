@@ -198,6 +198,53 @@ button:disabled {
   margin-top: 0.5rem;
 }
 
+.dlc-settings {
+  margin-bottom: 0.75rem;
+}
+
+.dlc-settings__group {
+  border: 1px solid #2a3441;
+  border-radius: 6px;
+  padding: 0.65rem 0.75rem 0.75rem;
+  margin: 0 0 0.65rem;
+}
+
+.dlc-settings__group legend {
+  padding: 0 0.35rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7d94;
+}
+
+.dlc-settings__group:disabled {
+  opacity: 0.55;
+}
+
+.dlc-settings__row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.dlc-settings__row label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: #8b9cb3;
+}
+
+.dlc-settings__row input[type="number"] {
+  width: 100%;
+  padding: 0.35rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid #2a3441;
+  background: #0f1419;
+  color: #e7ecf3;
+  font-size: 0.9rem;
+}
+
 .error {
   background: #3d1f1f;
   border: 1px solid #7a3030;

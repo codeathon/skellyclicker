@@ -140,6 +140,23 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ enabled }),
     }),
+  setTrainingSettings: (settings: {
+    epochs?: number;
+    save_epochs?: number;
+    batch_size?: number;
+  }) =>
+    api<AppSession>("/api/training/settings", {
+      method: "POST",
+      body: JSON.stringify(settings),
+    }),
+  setAnalyzeOptions: (options: {
+    filter_predictions?: boolean;
+    annotate_videos?: boolean;
+  }) =>
+    api<AppSession>("/api/analyze/options", {
+      method: "POST",
+      body: JSON.stringify(options),
+    }),
   openLabeler: () => api<AppSession>("/api/labeling/open", { method: "POST" }),
   closeLabeler: (save: boolean, savePath?: string) =>
     api<AppSession>("/api/labeling/close", {

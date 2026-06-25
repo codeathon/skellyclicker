@@ -114,6 +114,26 @@ def test_close_labeler_leaves_labeling_state(fresh_store):
 	assert fresh_store.session.workflow_state != WorkflowState.labeling
 
 
+def test_training_settings_validation(fresh_store):
+	fresh_store.set_training_settings(epochs=50, save_epochs=10, batch_size=4)
+	assert fresh_store.session.training_epochs == 50
+	assert fresh_store.session.training_save_epochs == 10
+	assert fresh_store.session.training_batch_size == 4
+
+
+def test_training_settings_rejects_invalid(fresh_store):
+	from skellyclicker.services.errors import SessionError
+
+	with pytest.raises(SessionError, match="at least"):
+		fresh_store.set_training_settings(epochs=0)
+
+
+def test_analyze_options_round_trip(fresh_store):
+	fresh_store.set_analyze_options(filter_predictions=True, annotate_videos=True)
+	assert fresh_store.session.filter_predictions is True
+	assert fresh_store.session.annotate_videos is True
+
+
 def test_close_labeler_save_registers_human_labels(fresh_store, tmp_path):
 	"""Saving from the labeler always registers human_labels_path."""
 	from unittest.mock import MagicMock

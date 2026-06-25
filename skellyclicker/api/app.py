@@ -86,6 +86,17 @@ class ToggleBody(BaseModel):
 	enabled: bool
 
 
+class TrainingSettingsBody(BaseModel):
+	epochs: int | None = None
+	save_epochs: int | None = None
+	batch_size: int | None = None
+
+
+class AnalyzeOptionsBody(BaseModel):
+	filter_predictions: bool | None = None
+	annotate_videos: bool | None = None
+
+
 class DialogBody(BaseModel):
 	title: str = "Select"
 	extensions: list[str] = []
@@ -238,6 +249,27 @@ def set_train_on_machine(body: ToggleBody) -> AppSession:
 		)
 	store.session.train_on_machine_labels = body.enabled
 	return store.get_session()
+
+
+@app.post("/api/training/settings", response_model=AppSession)
+def set_training_settings(body: TrainingSettingsBody) -> AppSession:
+	if body.epochs is None and body.save_epochs is None and body.batch_size is None:
+		raise HTTPException(status_code=400, detail="Provide at least one training setting")
+	return store.set_training_settings(
+		epochs=body.epochs,
+		save_epochs=body.save_epochs,
+		batch_size=body.batch_size,
+	)
+
+
+@app.post("/api/analyze/options", response_model=AppSession)
+def set_analyze_options(body: AnalyzeOptionsBody) -> AppSession:
+	if body.filter_predictions is None and body.annotate_videos is None:
+		raise HTTPException(status_code=400, detail="Provide at least one analyze option")
+	return store.set_analyze_options(
+		filter_predictions=body.filter_predictions,
+		annotate_videos=body.annotate_videos,
+	)
 
 
 @app.post("/api/dlc/load", response_model=AppSession)

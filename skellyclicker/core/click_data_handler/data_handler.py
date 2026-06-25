@@ -76,6 +76,8 @@ class DataHandler(BaseModel):
         raw["video"] = raw["video"].astype(str)
         csv_bodyparts = bodypart_names_from_csv_columns(list(raw.columns))
         sparse = raw.set_index(["video", "frame"])
+        # DLC analyze output can repeat (video, frame) rows — keep first.
+        sparse = sparse[~sparse.index.duplicated(keep="first")]
 
         if tracked_point_names:
             # Keep DLC/session bodypart order; append any extras found in the CSV.
@@ -101,16 +103,63 @@ class DataHandler(BaseModel):
             tracked_point_names=names,
         )
         dataframe = cls._create_dataframe(config)
-        for col in sparse.columns:
-            if col not in dataframe.columns:
-                continue
-            for idx in sparse.index:
-                if idx not in dataframe.index:
-                    continue
-                val = sparse.at[idx, col]
-                if pd.notna(val):
-                    dataframe.at[idx, col] = val
+        common_cols = [c for c in sparse.columns if c in dataframe.columns]
+        if common_cols:
+            # Vectorized merge — nested .at loops are unusably slow on dense DLC CSVs.
+            aligned = sparse[common_cols].reindex(dataframe.index)
+            dataframe[common_cols] = aligned.to_numpy()
 
+        return cls(
+            config=config,
+            dataframe=dataframe,
+            active_point=names[0],
+        )
+
+    @classmethod
+    def from_csv_overlay(
+        cls,
+        input_path: str | Path,
+        *,
+        video_names: list[str] | None = None,
+        num_frames: int | None = None,
+        tracked_point_names: list[str] | None = None,
+    ) -> "DataHandler":
+        """Load machine-prediction CSV without allocating a full video×frame grid."""
+        raw = pd.read_csv(input_path)
+        raw["video"] = raw["video"].astype(str)
+        csv_bodyparts = bodypart_names_from_csv_columns(list(raw.columns))
+        sparse = raw.set_index(["video", "frame"])
+        sparse = sparse[~sparse.index.duplicated(keep="first")]
+
+        if tracked_point_names:
+            names = list(tracked_point_names)
+            for bp in csv_bodyparts:
+                if bp not in names:
+                    names.append(bp)
+        else:
+            names = csv_bodyparts
+
+        if not names:
+            raise ValueError(f"No bodyparts found in labels CSV: {input_path}")
+
+        if video_names is None:
+            video_names = sorted(sparse.index.get_level_values("video").unique().tolist())
+        if num_frames is None:
+            frame_vals = sparse.index.get_level_values("frame")
+            num_frames = int(frame_vals.max()) + 1 if len(frame_vals) else 1
+
+        wanted_cols = []
+        for point_name in names:
+            wanted_cols.append(f"{point_name}_x")
+            wanted_cols.append(f"{point_name}_y")
+        overlay_cols = [c for c in wanted_cols if c in sparse.columns]
+        dataframe = sparse[overlay_cols] if overlay_cols else sparse.iloc[:, 0:0]
+
+        config = DataHandlerConfig(
+            num_frames=num_frames,
+            video_names=video_names,
+            tracked_point_names=names,
+        )
         return cls(
             config=config,
             dataframe=dataframe,
@@ -206,7 +255,10 @@ class DataHandler(BaseModel):
         self, video_index: int, frame_number: int
     ) -> dict[str, ClickData]:
         video_name = self.config.video_names[video_index]
-        video_frame_row = self.dataframe.loc[(video_name, frame_number)]
+        try:
+            video_frame_row = self.dataframe.loc[(video_name, frame_number)]
+        except KeyError:
+            return {}
 
         # TODO: There is some error in the DLC machine labels that sometimes returns duplicate data, this pulls the first occurence for each row
         if len(video_frame_row.shape) > 1:
