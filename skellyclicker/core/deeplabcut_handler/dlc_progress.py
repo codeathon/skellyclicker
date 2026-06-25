@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -10,10 +12,74 @@ from typing import Any
 from tqdm import tqdm as TqdmBase
 
 ProgressCallback = Callable[[float, str], None]
+TrainProgressCallback = Callable[[float | None, str], None]
 
 # Inference phase occupies this slice of overall analyze job progress.
 ANALYZE_INFERENCE_START = 0.05
 ANALYZE_INFERENCE_END = 0.75
+
+# Training epoch updates map into this slice (after dataset prep reports ~15%).
+TRAIN_PROGRESS_START = 0.15
+TRAIN_PROGRESS_END = 0.95
+
+_TRAIN_EPOCH_RE = re.compile(
+	r"Epoch (\d+)/(\d+).*?train loss ([\d.]+)",
+)
+
+
+def train_epoch_fraction(
+	current_epoch: int,
+	total_epochs: int,
+	*,
+	train_start: float = TRAIN_PROGRESS_START,
+	train_end: float = TRAIN_PROGRESS_END,
+) -> float:
+	"""Map DLC epoch counter to overall train-job progress."""
+	if total_epochs <= 0:
+		return train_start
+	ratio = min(max(current_epoch / total_epochs, 0.0), 1.0)
+	return train_start + ratio * (train_end - train_start)
+
+
+@contextmanager
+def hook_dlc_training_progress(
+	callback: TrainProgressCallback,
+	*,
+	train_start: float = TRAIN_PROGRESS_START,
+	train_end: float = TRAIN_PROGRESS_END,
+):
+	"""Forward DLC PyTorch `Epoch X/Y` log lines to the job progress callback."""
+	original_info = logging.info
+
+	def patched_info(msg, *args, **kwargs):
+		if args or kwargs:
+			original_info(msg, *args, **kwargs)
+			try:
+				text = msg % args if args else str(msg)
+			except (TypeError, ValueError):
+				text = str(msg)
+		else:
+			original_info(msg)
+			text = str(msg)
+		match = _TRAIN_EPOCH_RE.search(text)
+		if not match:
+			return
+		current = int(match.group(1))
+		total = int(match.group(2))
+		loss = match.group(3)
+		fraction = train_epoch_fraction(
+			current,
+			total,
+			train_start=train_start,
+			train_end=train_end,
+		)
+		callback(fraction, f"Epoch {current}/{total} · train loss {loss}")
+
+	logging.info = patched_info
+	try:
+		yield
+	finally:
+		logging.info = original_info
 
 
 class ReportingTqdm(TqdmBase):

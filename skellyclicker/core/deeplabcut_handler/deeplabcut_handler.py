@@ -181,17 +181,22 @@ class DeeplabcutHandler(BaseModel):
         logger.info("Training model...")
         logger.info(f"With config: epochs={training_config.epochs}, save epochs={training_config.save_epochs}, batch_size={training_config.batch_size}, learning_rate={training_config.learning_rate}")
         report(
-            None,
-            f"Training network ({training_config.epochs} epochs — this may take a while)…",
+            0.15,
+            f"Training network ({training_config.epochs} epochs)…",
         )
         start_time = perf_counter_ns()
-        deeplabcut.train_network(
-            self.project_config_path,
-            epochs=training_config.epochs,
-            save_epochs=training_config.save_epochs,
-            batch_size=training_config.batch_size,
-            pytorch_cfg_updates=pytorch_cfg_updates
+        from skellyclicker.core.deeplabcut_handler.dlc_progress import (
+            hook_dlc_training_progress,
         )
+
+        with hook_dlc_training_progress(report):
+            deeplabcut.train_network(
+                self.project_config_path,
+                epochs=training_config.epochs,
+                save_epochs=training_config.save_epochs,
+                batch_size=training_config.batch_size,
+                pytorch_cfg_updates=pytorch_cfg_updates
+            )
         end_time = perf_counter_ns()
         report(1.0, "Training finished")
         print(f"Model training took {(end_time-start_time)/1e9} seconds over {training_config.epochs} epochs ({(end_time-start_time)/(1e9*training_config.epochs)} s per epoch)")
