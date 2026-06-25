@@ -216,7 +216,9 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
 			<img id="label-img" src={imgSrc} alt="" hidden onLoad={onImageLoad} />
-			<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
+			<div className="labeling-stage">
+				<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
+			</div>
 			<div className="frame-scrubber">
 				<label htmlFor="frame-slider">
 					Frame {state.frame_number + 1} / {state.frame_count}

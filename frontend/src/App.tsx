@@ -183,7 +183,7 @@ export default function App() {
           <LoadedAssets session={session} />
         </aside>
 
-        <main>
+        <main className={labeling ? "main--labeling" : undefined}>
           {error && <div className="error">{error}</div>}
           {jobProgress && <JobProgressBar progress={jobProgress} />}
           {!labeling && (
