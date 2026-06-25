@@ -150,6 +150,13 @@ export default function App() {
     startJob(session.active_job_id, name).catch((e) => setError(String(e)));
   }, [session?.active_job_id, session?.workflow_state, startJob]);
 
+  const labeling = session?.workflow_state === "labeling";
+
+  useEffect(() => {
+    document.body.classList.toggle("labeling-mode", !!labeling);
+    return () => document.body.classList.remove("labeling-mode");
+  }, [labeling]);
+
   const run = async (fn: () => Promise<AppSession>) => {
     try {
       setError(null);
@@ -161,7 +168,6 @@ export default function App() {
 
   if (!session) return <div className="app">Loading…</div>;
 
-  const labeling = session.workflow_state === "labeling";
   const guide = deriveWorkflowGuide(session);
   const focusStep = guide.currentStepId;
 
@@ -169,7 +175,7 @@ export default function App() {
     steps.includes(focusStep as StepId) ? "action-group highlight" : "action-group";
 
   return (
-    <div className="app">
+    <div className={labeling ? "app app--labeling" : "app"}>
       <header>
         <div className="header-left">
           <span className="session-label">{sessionLabel(session)}</span>
@@ -178,10 +184,12 @@ export default function App() {
         <h1>SkellyClicker</h1>
       </header>
 
-      <div className="layout">
-        <aside>
-          <LoadedAssets session={session} />
-        </aside>
+      <div className={labeling ? "layout layout--labeling" : "layout"}>
+        {!labeling && (
+          <aside>
+            <LoadedAssets session={session} />
+          </aside>
+        )}
 
         <main className={labeling ? "main--labeling" : undefined}>
           {error && <div className="error">{error}</div>}

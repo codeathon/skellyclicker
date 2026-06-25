@@ -9,10 +9,25 @@ body {
   color: #e7ecf3;
 }
 
+body.labeling-mode {
+  overflow: hidden;
+  height: 100%;
+}
+
+html {
+  height: 100%;
+}
+
 .app {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.app.app--labeling {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 header {
@@ -56,6 +71,11 @@ header h1 {
   min-height: 0;
 }
 
+.layout.layout--labeling {
+  grid-template-columns: 1fr;
+  overflow: hidden;
+}
+
 .session-actions {
   display: flex;
   justify-content: center;
@@ -89,7 +109,13 @@ main.main--labeling {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 0.75rem 1rem;
+  padding: 0.5rem 0.75rem;
+  min-height: 0;
+}
+
+main.main--labeling > .labeling {
+  flex: 1;
+  min-height: 0;
 }
 
 .panel {
@@ -275,9 +301,9 @@ button:disabled {
 
 .labeling-toolbar {
   display: flex;
-  gap: 1rem;
-  margin-bottom: 0.5rem;
-  font-size: 0.9rem;
+  gap: 0.65rem 1rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
   flex-wrap: wrap;
   align-items: center;
   flex-shrink: 0;
@@ -368,18 +394,17 @@ button:disabled {
   display: block;
   max-width: 100%;
   max-height: 100%;
-  width: auto;
-  height: auto;
   cursor: crosshair;
   border: 1px solid #2a3441;
   border-radius: 4px;
 }
 
 .frame-scrubber {
-  margin-top: 0.5rem;
+  margin-top: 0.35rem;
+  padding-top: 0.25rem;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.25rem;
   flex-shrink: 0;
 }
 

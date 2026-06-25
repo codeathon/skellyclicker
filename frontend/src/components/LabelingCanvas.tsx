@@ -15,6 +15,7 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 	const [isClosing, setIsClosing] = useState(false);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
+	const stageRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
 	const sliderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// Prevent Esc / double-click from starting a second close while the save dialog is open.
@@ -117,6 +118,29 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 		return () => window.removeEventListener("keydown", onKey);
 	}, [state, closeLabeler, loadFrame]);
 
+	const fitCanvasToStage = useCallback(() => {
+		const stage = stageRef.current;
+		const canvas = canvasRef.current;
+		const img = document.getElementById("label-img") as HTMLImageElement | null;
+		if (!stage || !canvas || !img?.naturalWidth || !img.naturalHeight) return;
+
+		const maxW = stage.clientWidth;
+		const maxH = stage.clientHeight;
+		if (maxW <= 0 || maxH <= 0) return;
+
+		const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
+		canvas.style.width = `${Math.floor(img.naturalWidth * scale)}px`;
+		canvas.style.height = `${Math.floor(img.naturalHeight * scale)}px`;
+	}, []);
+
+	useEffect(() => {
+		const stage = stageRef.current;
+		if (!stage) return;
+		const observer = new ResizeObserver(() => fitCanvasToStage());
+		observer.observe(stage);
+		return () => observer.disconnect();
+	}, [fitCanvasToStage, state?.session_id]);
+
 	const onImageLoad = () => {
 		const canvas = canvasRef.current;
 		const img = document.getElementById("label-img") as HTMLImageElement;
@@ -125,6 +149,7 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 		canvas.height = img.naturalHeight;
 		const ctx = canvas.getContext("2d");
 		if (ctx) ctx.drawImage(img, 0, 0);
+		fitCanvasToStage();
 	};
 
 	const onClick = async (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -216,7 +241,7 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
 			<img id="label-img" src={imgSrc} alt="" hidden onLoad={onImageLoad} />
-			<div className="labeling-stage">
+			<div className="labeling-stage" ref={stageRef}>
 				<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
 			</div>
 			<div className="frame-scrubber">
