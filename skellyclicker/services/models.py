@@ -42,7 +42,7 @@ class AppSession(BaseModel):
 	status_message: str = "Ready"
 	training_epochs: int = 200
 	training_save_epochs: int = 20
-	training_batch_size: int = 1
+	training_batch_size: int = 8
 	filter_predictions: bool = False
 	annotate_videos: bool = False
 

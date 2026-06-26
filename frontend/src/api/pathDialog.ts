@@ -4,6 +4,7 @@
  */
 
 import { client } from "./client";
+import { humanLabelsCsvDefaultName } from "./labelsCsvName";
 
 function pickBrowserFiles(
 	accept: string,
@@ -96,9 +97,9 @@ export const pathDialog = {
 		withBrowserUploadFallback(
 			() =>
 				pickServerPaths(() =>
-					client.dialogOpenFiles(title, ["mp4", "avi", "mov"]),
+					client.dialogOpenFiles(title, ["*"]),
 				),
-			".mp4,.avi,.mov,video/*",
+			"",
 			true,
 		),
 
@@ -127,22 +128,26 @@ export const pathDialog = {
 			return dir?.[0] ?? null;
 		}, "DLC project selection"),
 
-	saveCsv: (title = "Save human labels CSV") =>
+	saveCsv: (title = "Save human labels CSV", defaultName?: string) =>
 		requireServerDialog(
 			() =>
 				pickServerPaths(() =>
-					client.dialogSaveFile(title, ["csv"], "skellyclicker_labels.csv"),
+					client.dialogSaveFile(
+						title,
+						["csv"],
+						defaultName ?? humanLabelsCsvDefaultName(null),
+					),
 				),
 			"saving labels",
 		).then((paths) => paths?.[0] ?? null),
 
 	/** Labeler save — null means use the server default path under the video folder. */
-	saveCsvForLabeler: async () => {
+	saveCsvForLabeler: async (defaultName?: string) => {
 		try {
 			const { paths } = await client.dialogSaveFile(
 				"Save human labels CSV",
 				["csv"],
-				"skellyclicker_labels.csv",
+				defaultName ?? humanLabelsCsvDefaultName(null),
 			);
 			return paths[0] ?? null;
 		} catch (e) {

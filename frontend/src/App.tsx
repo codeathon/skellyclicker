@@ -206,6 +206,7 @@ export default function App() {
           {labeling ? (
             <LabelingCanvas
               humanLabelsPath={session.human_labels_path}
+              videoPaths={session.videos}
               onClose={(updated) => setSession(updated)}
             />
           ) : (

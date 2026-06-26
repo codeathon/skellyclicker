@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -7,6 +6,7 @@ import numpy as np
 from pydantic import BaseModel
 
 from skellyclicker import VideoPathString
+from skellyclicker.core.human_labels_io import human_labels_csv_filename
 from skellyclicker.core.click_data_handler.click_handler import ClickHandler
 from skellyclicker.core.click_data_handler.data_handler import (
     DataHandler,
@@ -474,10 +474,8 @@ class VideoHandler(BaseModel):
 
         if save_path.is_dir():
             save_path.mkdir(exist_ok=True, parents=True)
-            csv_path = save_path / (
-                datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                + "_skellyclicker_output.csv"
-            )
+            video_names = sorted(v.name for v in self.videos.values())
+            csv_path = save_path / human_labels_csv_filename(video_names)
         else:
             csv_path = save_path
 

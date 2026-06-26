@@ -25,7 +25,7 @@ def _base_session(**kwargs) -> AppSession:
 		"status_message": "",
 		"training_epochs": 200,
 		"training_save_epochs": 20,
-		"training_batch_size": 1,
+		"training_batch_size": 8,
 		"filter_predictions": False,
 		"annotate_videos": False,
 	}

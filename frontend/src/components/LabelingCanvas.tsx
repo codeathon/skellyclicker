@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppSession, client, LabelingState } from "../api/client";
 import { pathDialog } from "../api/pathDialog";
+import { humanLabelsCsvDefaultName } from "../api/labelsCsvName";
 
 interface Props {
 	humanLabelsPath: string | null;
+	videoPaths: string[] | null;
 	onClose: (session: AppSession) => void;
 }
 
@@ -24,7 +26,7 @@ async function isJpegBlob(blob: Blob): Promise<boolean> {
 	return header[0] === 0xff && header[1] === 0xd8;
 }
 
-export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
+export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) {
 	const [state, setState] = useState<LabelingState | null>(null);
 	const [sliderFrame, setSliderFrame] = useState(0);
 	const [error, setError] = useState<string | null>(null);
@@ -210,7 +212,9 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 					if (humanLabelsPath) {
 						savePath = humanLabelsPath;
 					} else {
-						const picked = await pathDialog.saveCsvForLabeler();
+						const picked = await pathDialog.saveCsvForLabeler(
+							humanLabelsCsvDefaultName(videoPaths),
+						);
 						savePath = picked ?? undefined;
 					}
 				}
@@ -222,7 +226,7 @@ export function LabelingCanvas({ humanLabelsPath, onClose }: Props) {
 				setError(e instanceof Error ? e.message : String(e));
 			}
 		},
-		[humanLabelsPath, onClose],
+		[humanLabelsPath, videoPaths, onClose],
 	);
 
 	useEffect(() => {
