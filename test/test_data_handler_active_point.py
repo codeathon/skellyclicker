@@ -102,3 +102,19 @@ def test_from_csv_overlay_skips_empty_frames(tmp_path):
 	)
 	assert handler.get_data_by_video_frame(0, 5)["nose"].video_x == 10
 	assert handler.get_data_by_video_frame(0, 0) == {}
+
+
+def test_from_csv_overlay_remaps_session_video_names(tmp_path):
+	"""Machine overlay must follow session video basenames after import-then-add-video."""
+	csv_path = tmp_path / "machine.csv"
+	csv_path.write_text(
+		"video,frame,nose_x,nose_y\n"
+		"session_cam.mp4,3,11.0,22.0\n"
+	)
+	handler = DataHandler.from_csv_overlay(
+		csv_path,
+		video_names=["ferret_left.avi"],
+		num_frames=100,
+		tracked_point_names=["nose"],
+	)
+	assert handler.get_data_by_video_frame(0, 3)["nose"].video_x == 11

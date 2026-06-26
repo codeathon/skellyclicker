@@ -14,6 +14,57 @@ from skellyclicker.core.video_handler.video_models import ClickData, VideoPlayba
 logger = logging.getLogger(__name__)
 
 
+def align_label_video_names(
+	csv_video_names: list[str],
+	session_video_names: list[str],
+) -> dict[str, str]:
+	"""Map CSV video column values onto the session's loaded video basenames."""
+	csv_sorted = sorted(set(csv_video_names))
+	session_sorted = sorted(set(session_video_names))
+	if csv_sorted == session_sorted:
+		return {name: name for name in csv_video_names}
+
+	mapping: dict[str, str] = {}
+	unmatched_csv = list(csv_sorted)
+	unmatched_session = list(session_sorted)
+
+	# Exact or stem match (same clip, different path/extension in CSV vs session).
+	for csv_name in list(unmatched_csv):
+		csv_stem = Path(csv_name).stem
+		for session_name in list(unmatched_session):
+			if (
+				csv_name == session_name
+				or Path(session_name).stem == csv_stem
+			):
+				mapping[csv_name] = session_name
+				unmatched_csv.remove(csv_name)
+				unmatched_session.remove(session_name)
+				break
+
+	# Same camera count — align sorted lists (legacy sessions often rename files).
+	if len(unmatched_csv) == len(unmatched_session) and unmatched_csv:
+		for csv_name, session_name in zip(unmatched_csv, unmatched_session):
+			mapping[csv_name] = session_name
+	elif len(session_sorted) == 1 and len(csv_sorted) == 1:
+		mapping[csv_sorted[0]] = session_sorted[0]
+
+	return mapping
+
+
+def _remap_sparse_video_index(
+	sparse: pd.DataFrame,
+	video_map: dict[str, str],
+) -> pd.DataFrame:
+	if not video_map:
+		return sparse
+	remapped = sparse.copy()
+	remapped.index = pd.MultiIndex.from_tuples(
+		[(video_map.get(video, video), frame) for video, frame in sparse.index],
+		names=sparse.index.names,
+	)
+	return remapped[~remapped.index.duplicated(keep="first")]
+
+
 class DataHandlerConfig(BaseModel):
     num_frames: int
     video_names: list[str]
@@ -142,8 +193,14 @@ class DataHandler(BaseModel):
         if not names:
             raise ValueError(f"No bodyparts found in labels CSV: {input_path}")
 
+        csv_video_names = sorted(
+            sparse.index.get_level_values("video").unique().tolist()
+        )
         if video_names is None:
-            video_names = sorted(sparse.index.get_level_values("video").unique().tolist())
+            video_names = csv_video_names
+        else:
+            video_map = align_label_video_names(csv_video_names, video_names)
+            sparse = _remap_sparse_video_index(sparse, video_map)
         if num_frames is None:
             frame_vals = sparse.index.get_level_values("frame")
             num_frames = int(frame_vals.max()) + 1 if len(frame_vals) else 1
@@ -157,7 +214,7 @@ class DataHandler(BaseModel):
 
         config = DataHandlerConfig(
             num_frames=num_frames,
-            video_names=video_names,
+            video_names=sorted(video_names),
             tracked_point_names=names,
         )
         return cls(
