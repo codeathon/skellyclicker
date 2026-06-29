@@ -273,6 +273,23 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 						if (isIgnorableFetchError(err)) return;
 						setError(String(err));
 					});
+				return;
+			}
+			if (key === "h") {
+				e.preventDefault();
+				const gen = ++previewGenRef.current;
+				client
+					.toggleHelp()
+					.then(async (s) => {
+						if (gen !== previewGenRef.current) return;
+						frameRef.current = s.frame_number;
+						setState(s);
+						await fetchAndPaintFrame(s.frame_number, false, gen);
+					})
+					.catch((err) => {
+						if (isIgnorableFetchError(err)) return;
+						setError(String(err));
+					});
 			}
 		};
 		window.addEventListener("keydown", onKey);
@@ -380,7 +397,9 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 				>
 					Close without Saving
 				</button>
-				<span className="hint">a/d or ←/→ frames · drag slider to scrub · m overlay · Esc close</span>
+				<span className="hint">
+					a/d or ←/→ frames · scrub slider · m machine overlay · h help · Esc close
+				</span>
 			</div>
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}

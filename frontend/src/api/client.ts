@@ -43,6 +43,7 @@ export interface LabelingState {
   tracked_points: string[];
   labeled_frames: number;
   show_machine_labels: boolean;
+  show_help: boolean;
   has_machine_labels: boolean;
   auto_next_point: boolean;
   grid_width: number;
@@ -176,6 +177,8 @@ export const client = {
     }),
   toggleMachineOverlay: () =>
     api<LabelingState>("/api/labeling/toggle-machine-overlay", { method: "POST" }),
+  toggleHelp: () =>
+    api<LabelingState>("/api/labeling/toggle-help", { method: "POST" }),
   loadDlc: (path: string) =>
     api<AppSession>("/api/dlc/load", {
       method: "POST",

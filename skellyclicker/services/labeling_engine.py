@@ -19,6 +19,7 @@ class LabelingEngine(BaseModel):
 	frame_number: int = 0
 	auto_next_point: bool = True
 	show_machine_labels: bool = False
+	show_help: bool = False
 	# OpenCV VideoCapture is not thread-safe; scrub previews hit this concurrently.
 	_render_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
@@ -53,6 +54,7 @@ class LabelingEngine(BaseModel):
 			machine_labels_path=overlay,
 		)
 		engine = cls(video_handler=handler)
+		engine.video_handler.image_annotator.config.web_help = True
 		engine.sync_active_point()
 		return engine
 
@@ -77,6 +79,7 @@ class LabelingEngine(BaseModel):
 				self.sync_active_point()
 
 			prev_show = self.video_handler.show_machine_labels
+			prev_help = self.video_handler.image_annotator.config.show_help
 			try:
 				if preview:
 					# Scrub preview: show machine predictions when available, skip human overlays.
@@ -87,6 +90,7 @@ class LabelingEngine(BaseModel):
 						self.video_handler.ensure_machine_labels_loaded()
 				else:
 					self.video_handler.show_machine_labels = self.show_machine_labels
+				self.video_handler.image_annotator.config.show_help = self.show_help
 				image = self.video_handler.create_grid_image(
 					render_at,
 					annotate_images=not preview,
@@ -94,6 +98,7 @@ class LabelingEngine(BaseModel):
 			finally:
 				if preview:
 					self.video_handler.show_machine_labels = prev_show
+				self.video_handler.image_annotator.config.show_help = prev_help
 
 			quality = 55 if preview else 85
 			ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, quality])
@@ -118,6 +123,7 @@ class LabelingEngine(BaseModel):
 			"tracked_points": handler.data_handler.config.tracked_point_names,
 			"labeled_frames": labeled,
 			"show_machine_labels": self.show_machine_labels,
+			"show_help": self.show_help,
 			"has_machine_labels": bool(handler.machine_labels_path),
 			"auto_next_point": self.auto_next_point,
 			"grid_width": handler.grid_parameters.total_width,

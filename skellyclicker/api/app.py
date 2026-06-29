@@ -355,6 +355,15 @@ def toggle_machine_overlay():
 	return eng.state_dict()
 
 
+@app.post("/api/labeling/toggle-help")
+def toggle_help_overlay():
+	if not store.labeling_engine:
+		raise HTTPException(status_code=400, detail="Labeler is not open")
+	eng = store.labeling_engine
+	eng.show_help = not eng.show_help
+	return eng.state_dict()
+
+
 @app.post("/api/dlc/train")
 def train_network():
 	try:

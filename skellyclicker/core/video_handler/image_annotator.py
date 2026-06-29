@@ -43,6 +43,17 @@ FULL_HELP_TEXT = (
     "You will be prompted to save the data in the terminal."
 )
 
+# Web labeler shortcuts (subset of desktop OpenCV viewer).
+WEB_FULL_HELP_TEXT = (
+    "Click the video to place the active bodypart.\n"
+    "Use 'a' / 'd' or arrow keys for previous / next frame.\n"
+    "Drag the frame slider to scrub previews.\n"
+    "Press 'm' to toggle machine label overlay.\n"
+    "Press 'h' to hide this help.\n"
+    "Press Esc to close (prompts to save).\n"
+    "Use Save & Close or Close without Saving."
+)
+
 
 def hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
     """Convert HSV color to RGB."""
@@ -91,6 +102,88 @@ def _comma_array(names: list[str]) -> str:
     return "[" + ", ".join(names) + "]"
 
 
+def _draw_legend_marker(
+    image: np.ndarray,
+    center: tuple[int, int],
+    *,
+    marker_type: int,
+    marker_size: int,
+    marker_thickness: int,
+    color: tuple[int, int, int],
+) -> None:
+    """Sample marker for the on-frame legend (white halo + colored shape)."""
+    cv2.drawMarker(
+        image,
+        position=center,
+        color=(1, 1, 1),
+        markerType=marker_type,
+        markerSize=int(marker_size * 1.3),
+        thickness=int(marker_thickness * 1.3),
+    )
+    cv2.drawMarker(
+        image,
+        position=center,
+        color=color,
+        markerType=marker_type,
+        markerSize=marker_size,
+        thickness=marker_thickness,
+    )
+
+
+def _draw_label_legend(
+    image: np.ndarray,
+    *,
+    x: int,
+    y: int,
+    font_scale: float,
+    text_thickness: int,
+    line_spacing: int,
+) -> None:
+    """Bottom-right key: human diamonds vs machine crosses (matches overlay styles)."""
+    legend_color = (210, 210, 210)
+    marker_x = x + 10
+    row_h = line_spacing
+
+    _draw_legend_marker(
+        image,
+        (marker_x, y),
+        marker_type=cv2.MARKER_DIAMOND,
+        marker_size=12,
+        marker_thickness=1,
+        color=legend_color,
+    )
+    draw_doubled_text(
+        image=image,
+        text="Human label",
+        x=x + 26,
+        y=y + 6,
+        font_scale=font_scale,
+        color=legend_color,
+        thickness=text_thickness,
+        line_spacing=row_h,
+    )
+
+    machine_y = y + row_h
+    _draw_legend_marker(
+        image,
+        (marker_x, machine_y),
+        marker_type=cv2.MARKER_CROSS,
+        marker_size=8,
+        marker_thickness=1,
+        color=legend_color,
+    )
+    draw_doubled_text(
+        image=image,
+        text="Machine label",
+        x=x + 26,
+        y=machine_y + 6,
+        font_scale=font_scale,
+        color=legend_color,
+        thickness=text_thickness,
+        line_spacing=row_h,
+    )
+
+
 def _labels_overlay_text(
     tracked_points: list[str],
     click_data: dict[str, ClickData],
@@ -119,8 +212,10 @@ class ImageAnnotatorConfig(BaseModel):
     text_font: int = cv2.FONT_HERSHEY_SIMPLEX
 
     show_help: bool = False
+    web_help: bool = False
     show_clicks: bool = True
     show_names: bool = True
+    show_legend: bool = True
     tracked_points: list[str] = []
 
 
@@ -132,16 +227,34 @@ class ImageAnnotator(BaseModel):
                             active_point: str,
                             frame_number: int) -> np.ndarray:
         if self.config.show_help:
-            help_text = FULL_HELP_TEXT
+            help_text = WEB_FULL_HELP_TEXT if self.config.web_help else FULL_HELP_TEXT
         else:
             help_text = SHORT_HELP_TEXT
+
+        frame_x = (image.shape[1] // 10) * 8
+        frame_y = (image.shape[0] // 10) * 9
+        line_spacing = int(30 * self.config.text_size)
+
+        if self.config.show_legend:
+            legend_font = self.config.text_size * 0.55
+            legend_y = frame_y - line_spacing * 2
+            _draw_label_legend(
+                image,
+                x=frame_x,
+                y=legend_y,
+                font_scale=legend_font,
+                text_thickness=max(1, self.config.text_thickness - 1),
+                line_spacing=int(22 * self.config.text_size),
+            )
+
         draw_doubled_text(image=image,
                           text=f"Frame Number: {frame_number}\n {active_point}",
-                          x=(image.shape[1] // 10) * 8,
-                          y=(image.shape[0] // 10) * 9,
+                          x=frame_x,
+                          y=frame_y,
                           font_scale=self.config.text_size,
                           color=(255,0,255),
-                          thickness=self.config.text_thickness)
+                          thickness=self.config.text_thickness,
+                          line_spacing=line_spacing)
 
         draw_doubled_text(image=image,
                           text=help_text,
