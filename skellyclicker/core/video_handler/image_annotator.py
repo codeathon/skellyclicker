@@ -138,27 +138,28 @@ def _draw_label_legend(
     font_scale: float,
     text_thickness: int,
     line_spacing: int,
+    color: tuple[int, int, int] = (255, 255, 255),
 ) -> None:
     """Bottom-right key: human diamonds vs machine crosses (matches overlay styles)."""
-    legend_color = (210, 210, 210)
-    marker_x = x + 10
+    marker_x = x + 12
     row_h = line_spacing
+    marker_scale = max(1.0, font_scale)
 
     _draw_legend_marker(
         image,
-        (marker_x, y),
+        (marker_x, y + int(6 * marker_scale)),
         marker_type=cv2.MARKER_DIAMOND,
-        marker_size=12,
-        marker_thickness=1,
-        color=legend_color,
+        marker_size=int(14 * marker_scale),
+        marker_thickness=max(1, text_thickness),
+        color=color,
     )
     draw_doubled_text(
         image=image,
         text="Human label",
-        x=x + 26,
-        y=y + 6,
+        x=x + 32,
+        y=y + int(10 * marker_scale),
         font_scale=font_scale,
-        color=legend_color,
+        color=color,
         thickness=text_thickness,
         line_spacing=row_h,
     )
@@ -166,19 +167,19 @@ def _draw_label_legend(
     machine_y = y + row_h
     _draw_legend_marker(
         image,
-        (marker_x, machine_y),
+        (marker_x, machine_y + int(6 * marker_scale)),
         marker_type=cv2.MARKER_CROSS,
-        marker_size=8,
-        marker_thickness=1,
-        color=legend_color,
+        marker_size=int(10 * marker_scale),
+        marker_thickness=max(1, text_thickness),
+        color=color,
     )
     draw_doubled_text(
         image=image,
         text="Machine label",
-        x=x + 26,
-        y=machine_y + 6,
+        x=x + 32,
+        y=machine_y + int(10 * marker_scale),
         font_scale=font_scale,
-        color=legend_color,
+        color=color,
         thickness=text_thickness,
         line_spacing=row_h,
     )
@@ -233,28 +234,34 @@ class ImageAnnotator(BaseModel):
 
         frame_x = (image.shape[1] // 10) * 8
         frame_y = (image.shape[0] // 10) * 9
-        line_spacing = int(30 * self.config.text_size)
+        # Shared bottom-right HUD: legend + frame info (same size, white, left-aligned).
+        hud_color = (255, 255, 255)
+        hud_font_scale = self.config.text_size * 1.15
+        hud_thickness = self.config.text_thickness
+        hud_line_spacing = int(38 * hud_font_scale)
 
         if self.config.show_legend:
-            legend_font = self.config.text_size * 0.55
-            legend_y = frame_y - line_spacing * 2
+            legend_y = frame_y - hud_line_spacing * 2
             _draw_label_legend(
                 image,
                 x=frame_x,
                 y=legend_y,
-                font_scale=legend_font,
-                text_thickness=max(1, self.config.text_thickness - 1),
-                line_spacing=int(22 * self.config.text_size),
+                font_scale=hud_font_scale,
+                text_thickness=hud_thickness,
+                line_spacing=hud_line_spacing,
+                color=hud_color,
             )
 
-        draw_doubled_text(image=image,
-                          text=f"Frame Number: {frame_number}\n {active_point}",
-                          x=frame_x,
-                          y=frame_y,
-                          font_scale=self.config.text_size,
-                          color=(255,0,255),
-                          thickness=self.config.text_thickness,
-                          line_spacing=line_spacing)
+        draw_doubled_text(
+            image=image,
+            text=f"Frame Number: {frame_number}\n {active_point}",
+            x=frame_x,
+            y=frame_y,
+            font_scale=hud_font_scale,
+            color=hud_color,
+            thickness=hud_thickness,
+            line_spacing=hud_line_spacing,
+        )
 
         draw_doubled_text(image=image,
                           text=help_text,
