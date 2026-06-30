@@ -442,14 +442,15 @@ button:disabled {
 
 .labeling-close-actions {
   display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  width: 5.25rem;
+  flex-direction: row;
+  justify-content: center;
+  gap: 0.4rem;
   flex-shrink: 0;
+  width: 100%;
 }
 
 .labeling-close-actions .labeler-action-btn {
-  width: 100%;
+  width: auto;
   margin-bottom: 0;
   padding: 0.35rem 0.65rem;
   font-size: 0.85rem;
