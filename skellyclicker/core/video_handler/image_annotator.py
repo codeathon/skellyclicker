@@ -59,7 +59,8 @@ WEB_FULL_HELP_TEXT = (
     "Press 'm' to toggle machine label overlay.\n"
     "Press 'h' to hide this help.\n"
     "Press Esc to close (prompts to save).\n"
-    "Use Save & Close or Close without Saving."
+    "Use Save to write labels; Close to exit.\n"
+    "Press 'u' or Ctrl+Z to undo the last label."
 )
 
 

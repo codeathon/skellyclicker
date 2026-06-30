@@ -1,6 +1,7 @@
 """Headless labeling session — wraps VideoHandler without OpenCV windows."""
 
 import threading
+from typing import Any
 from uuid import uuid4
 
 import cv2
@@ -26,6 +27,7 @@ class LabelingEngine(BaseModel):
 	show_help: bool = False
 	# OpenCV VideoCapture is not thread-safe; scrub previews hit this concurrently.
 	_render_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+	_undo_stack: list[dict[str, Any]] = PrivateAttr(default_factory=list)
 
 	@classmethod
 	def open(
@@ -126,9 +128,70 @@ class LabelingEngine(BaseModel):
 			return encoded.tobytes()
 
 	def handle_click(self, x: int, y: int) -> None:
-		self.video_handler.handle_clicks(
-			x, y, self.frame_number, auto_next_point=self.auto_next_point
+		click_data = self.video_handler.click_handler.process_click(
+			x, y, self.frame_number
 		)
+		if click_data is None:
+			return
+		dh = self.video_handler.data_handler
+		point_name = dh.active_point
+		prev_x, prev_y = dh.get_point_coords(
+			click_data.video_index,
+			click_data.frame_number,
+			point_name,
+		)
+		dh.update_dataframe(click_data, point_name=point_name)
+		self._undo_stack.append(
+			{
+				"frame_number": click_data.frame_number,
+				"video_index": click_data.video_index,
+				"point_name": point_name,
+				"prev_x": prev_x,
+				"prev_y": prev_y,
+			}
+		)
+		if self.auto_next_point:
+			dh.move_active_point_by_index(index_change=1)
+
+	def undo_last_label(self) -> bool:
+		"""Revert the most recent label placement."""
+		if not self._undo_stack:
+			return False
+		entry = self._undo_stack.pop()
+		dh = self.video_handler.data_handler
+		if entry["prev_x"] is None:
+			dh.clear_point(
+				entry["video_index"],
+				entry["frame_number"],
+				entry["point_name"],
+			)
+		else:
+			dh.set_point_coords(
+				entry["video_index"],
+				entry["frame_number"],
+				entry["point_name"],
+				entry["prev_x"],
+				entry["prev_y"],
+			)
+		self.frame_number = int(entry["frame_number"])
+		dh.set_active_point_by_name(str(entry["point_name"]))
+		return True
+
+	def clear_active_point_on_frame(self) -> bool:
+		"""Remove the active bodypart on the current frame (all camera views)."""
+		dh = self.video_handler.data_handler
+		cleared = False
+		for video_index in range(len(dh.config.video_names)):
+			if dh.point_is_labeled(video_index, self.frame_number, dh.active_point):
+				dh.clear_point(video_index, self.frame_number, dh.active_point)
+				cleared = True
+		return cleared
+
+	def undo(self) -> bool:
+		"""Undo last placement, or clear active bodypart on this frame."""
+		if self._undo_stack:
+			return self.undo_last_label()
+		return self.clear_active_point_on_frame()
 
 	def _frame_label_status(self) -> tuple[list[str], list[str]]:
 		"""Bodyparts placed vs still available on the primary video for the current frame."""

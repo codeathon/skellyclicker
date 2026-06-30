@@ -387,6 +387,15 @@ def set_active_point(body: ActivePointBody):
 	return store.labeling_engine.state_dict()
 
 
+@app.post("/api/labeling/undo")
+def undo_label():
+	if not store.labeling_engine:
+		raise HTTPException(status_code=400, detail="Labeler is not open")
+	if not store.labeling_engine.undo():
+		raise HTTPException(status_code=400, detail="Nothing to undo")
+	return store.labeling_engine.state_dict()
+
+
 @app.post("/api/dlc/train")
 def train_network():
 	try:

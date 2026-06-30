@@ -30,7 +30,8 @@ Press 'm' to toggle machine label overlay.
 Press 'h' to hide this help.
 Press Esc to close (prompts to save).
 Use Save to write labels; Close to exit.
-Press Space to play or pause frames.`;
+Press Space to play or pause frames.
+Press 'u' or Ctrl+Z to undo the last label (or clear active label on frame).`;
 
 const PLAY_INTERVAL_MS = 66;
 
@@ -379,6 +380,24 @@ export function LabelingCanvas({
 		}
 	}, [videoPaths, onSessionUpdate, stopPlaying, isSaving]);
 
+	const undoLastLabel = useCallback(async () => {
+		if (!state || closingRef.current) return;
+		stopPlaying(false);
+		const gen = ++previewGenRef.current;
+		try {
+			const s = await client.undoLabel();
+			if (gen !== previewGenRef.current) return;
+			frameRef.current = s.frame_number;
+			setSliderFrame(s.frame_number);
+			setState(s);
+			setError(null);
+			await fetchAndPaintFrame(s.frame_number, false, gen);
+		} catch (err) {
+			if (isIgnorableFetchError(err)) return;
+			setError(err instanceof Error ? err.message : String(err));
+		}
+	}, [state, fetchAndPaintFrame, stopPlaying]);
+
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (!state || closingRef.current) return;
@@ -393,6 +412,15 @@ export function LabelingCanvas({
 			if (key === " ") {
 				e.preventDefault();
 				togglePlaying();
+				return;
+			}
+			if (
+				key === "u" ||
+				key === "backspace" ||
+				((e.ctrlKey || e.metaKey) && key === "z" && !e.shiftKey)
+			) {
+				e.preventDefault();
+				void undoLastLabel();
 				return;
 			}
 			if (key === "a" || key === "arrowleft") {
@@ -448,7 +476,7 @@ export function LabelingCanvas({
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [state, closeLabeler, loadFrame, fetchAndPaintFrame, stopPlaying, togglePlaying]);
+	}, [state, closeLabeler, loadFrame, fetchAndPaintFrame, stopPlaying, togglePlaying, undoLastLabel]);
 
 	const onActivePoint = useCallback(
 		(pointName: string) => {
@@ -522,7 +550,7 @@ export function LabelingCanvas({
 		>
 			<div className="labeling-toolbar">
 				<span className="hint labeling-toolbar-hint">
-					a/d or ←/→ frames · Space play/pause · scrub slider · m machine overlay · h help · Esc close
+					a/d or ←/→ frames · Space play/pause · u / Ctrl+Z undo · scrub slider · m machine overlay · h help · Esc close
 				</span>
 			</div>
 			{error && <div className="error">{error}</div>}

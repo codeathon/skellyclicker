@@ -199,6 +199,8 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ point_name }),
     }),
+  undoLabel: () =>
+    api<LabelingState>("/api/labeling/undo", { method: "POST" }),
   loadDlc: (path: string) =>
     api<AppSession>("/api/dlc/load", {
       method: "POST",

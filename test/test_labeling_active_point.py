@@ -85,3 +85,80 @@ def test_open_disables_auto_next_when_human_labels_loaded():
 
 	assert with_labels.auto_next_point is False
 	assert fresh.auto_next_point is True
+
+
+def test_undo_last_label_removes_fresh_placement():
+	from unittest.mock import MagicMock
+
+	from skellyclicker.core.video_handler.video_models import ClickData
+
+	config = DataHandlerConfig(
+		num_frames=10,
+		video_names=["cam.mp4"],
+		tracked_point_names=["nose", "tail_base"],
+	)
+	data_handler = DataHandler.from_config(config)
+
+	click_handler = MagicMock()
+	click = ClickData(
+		video_index=0,
+		frame_number=2,
+		video_x=40,
+		video_y=50,
+		window_x=10,
+		window_y=20,
+	)
+	click_handler.process_click.return_value = click
+
+	handler = MagicMock()
+	handler.data_handler = data_handler
+	handler.click_handler = click_handler
+
+	engine = LabelingEngine(video_handler=handler, auto_next_point=False)
+	engine.frame_number = 2
+	engine.handle_click(10, 20)
+
+	assert data_handler.point_is_labeled(0, 2, "nose")
+	assert engine.undo_last_label() is True
+	assert not data_handler.point_is_labeled(0, 2, "nose")
+	assert data_handler.active_point == "nose"
+	assert engine.frame_number == 2
+
+
+def test_undo_last_label_restores_previous_coords():
+	from unittest.mock import MagicMock
+
+	from skellyclicker.core.video_handler.video_models import ClickData
+
+	config = DataHandlerConfig(
+		num_frames=10,
+		video_names=["cam.mp4"],
+		tracked_point_names=["nose"],
+	)
+	data_handler = DataHandler.from_config(config)
+	data_handler.set_point_coords(0, 1, "nose", 12.0, 13.0)
+
+	click_handler = MagicMock()
+	click = ClickData(
+		video_index=0,
+		frame_number=1,
+		video_x=99,
+		video_y=88,
+		window_x=5,
+		window_y=6,
+	)
+	click_handler.process_click.return_value = click
+
+	handler = MagicMock()
+	handler.data_handler = data_handler
+	handler.click_handler = click_handler
+
+	engine = LabelingEngine(video_handler=handler, auto_next_point=False)
+	engine.frame_number = 1
+	engine.handle_click(5, 6)
+
+	x, y = data_handler.get_point_coords(0, 1, "nose")
+	assert (x, y) == (99.0, 88.0)
+	assert engine.undo_last_label() is True
+	x, y = data_handler.get_point_coords(0, 1, "nose")
+	assert (x, y) == (12.0, 13.0)
