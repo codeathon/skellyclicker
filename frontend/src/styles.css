@@ -489,6 +489,11 @@ button:disabled {
   font-size: 0.82rem;
 }
 
+.save-notice {
+  margin: 0 0 0.35rem;
+  color: #7eb8ff;
+}
+
 .video-list {
   margin: 0 0 0.6rem;
   padding: 0;

@@ -174,6 +174,11 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ save, save_path: savePath ?? null }),
     }),
+  saveLabeler: (savePath?: string) =>
+    api<AppSession>("/api/labeling/save", {
+      method: "POST",
+      body: JSON.stringify({ save_path: savePath ?? null }),
+    }),
   labelingState: () => api<LabelingState>("/api/labeling/state"),
   setFrame: (frame_number: number) =>
     api<LabelingState>("/api/labeling/frame", {

@@ -502,6 +502,10 @@ class VideoHandler(BaseModel):
 
         return saved_path
 
+    def save_labels(self, save_path: str | None = None) -> str:
+        """Persist human labels without releasing video captures."""
+        return self._save_data(save_pathstring=save_path)
+
     def _save_data(self, save_pathstring: str | None = None) -> str:
         if save_pathstring is None:
             # Default next to the loaded videos so labels are easy to find.

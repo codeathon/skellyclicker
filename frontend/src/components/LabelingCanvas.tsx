@@ -7,6 +7,7 @@ interface Props {
 	humanLabelsPath: string | null;
 	videoPaths: string[] | null;
 	onClose: (session: AppSession) => void;
+	onSessionUpdate: (session: AppSession) => void;
 }
 
 /** Firefox reports aborted fetches as NetworkError, not AbortError. */
@@ -28,7 +29,7 @@ Drag the frame slider to scrub previews.
 Press 'm' to toggle machine label overlay.
 Press 'h' to hide this help.
 Press Esc to close (prompts to save).
-Use Save or Close.
+Use Save to write labels; Close to exit.
 Press Space to play or pause frames.`;
 
 const PLAY_INTERVAL_MS = 66;
@@ -56,11 +57,19 @@ async function isJpegBlob(blob: Blob): Promise<boolean> {
 	return header[0] === 0xff && header[1] === 0xd8;
 }
 
-export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) {
+export function LabelingCanvas({
+	humanLabelsPath,
+	videoPaths,
+	onClose,
+	onSessionUpdate,
+}: Props) {
 	const [state, setState] = useState<LabelingState | null>(null);
 	const [sliderFrame, setSliderFrame] = useState(0);
 	const [error, setError] = useState<string | null>(null);
+	const [saveNotice, setSaveNotice] = useState<string | null>(null);
 	const [isClosing, setIsClosing] = useState(false);
+	const [isSaving, setIsSaving] = useState(false);
+	const labelsPathRef = useRef(humanLabelsPath);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
@@ -77,6 +86,10 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 	const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const frameCountRef = useRef(0);
 	const [playing, setPlaying] = useState(false);
+
+	useEffect(() => {
+		labelsPathRef.current = humanLabelsPath;
+	}, [humanLabelsPath]);
 
 	const fitCanvasToStage = useCallback(() => {
 		const stage = stageRef.current;
@@ -338,6 +351,34 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 		[humanLabelsPath, videoPaths, onClose, stopPlaying],
 	);
 
+	const saveLabels = useCallback(async () => {
+		if (closingRef.current || isSaving) return;
+		setIsSaving(true);
+		setError(null);
+		setSaveNotice(null);
+		stopPlaying(false);
+		try {
+			let savePath: string | undefined;
+			if (labelsPathRef.current) {
+				savePath = labelsPathRef.current;
+			} else {
+				const picked = await pathDialog.saveCsvForLabeler(
+					humanLabelsCsvDefaultName(videoPaths),
+				);
+				if (!picked) return;
+				savePath = picked;
+			}
+			const session = await client.saveLabeler(savePath);
+			labelsPathRef.current = session.human_labels_path;
+			onSessionUpdate(session);
+			setSaveNotice(session.status_message ?? "Labels saved.");
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setIsSaving(false);
+		}
+	}, [videoPaths, onSessionUpdate, stopPlaying, isSaving]);
+
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (!state || closingRef.current) return;
@@ -485,6 +526,7 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 				</span>
 			</div>
 			{error && <div className="error">{error}</div>}
+			{saveNotice && <p className="hint save-notice">{saveNotice}</p>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
 			<div className="labeling-body">
 				<div className="labeling-center">
@@ -531,10 +573,10 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 						<button
 							type="button"
 							className="labeler-action-btn"
-							disabled={isClosing}
-							onClick={() => void closeLabeler(true)}
+							disabled={isClosing || isSaving}
+							onClick={() => void saveLabels()}
 						>
-							Save
+							{isSaving ? "Saving…" : "Save"}
 						</button>
 						<button
 							type="button"

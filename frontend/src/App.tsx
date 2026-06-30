@@ -216,6 +216,7 @@ export default function App() {
               humanLabelsPath={session.human_labels_path}
               videoPaths={session.videos}
               onClose={(updated) => setSession(updated)}
+              onSessionUpdate={(updated) => setSession(updated)}
             />
           ) : (
             <section className="panel actions">

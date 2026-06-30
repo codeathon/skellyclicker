@@ -220,6 +220,30 @@ class SessionStore:
 		self.session.status_message = "Labeling"
 		return self.session
 
+	def _labeled_frame_count(self, engine) -> int:
+		handler = engine.video_handler.data_handler
+		mask = handler.dataframe.notna().any(axis=1)
+		if mask.any():
+			return int(
+				handler.dataframe.index[mask].get_level_values("frame").nunique()
+			)
+		return 0
+
+	def save_labeler(self, save_path: str | None = None) -> AppSession:
+		if not self.labeling_engine:
+			raise SessionError("Labeler is not open")
+		engine = self.labeling_engine
+		handler = engine.video_handler.data_handler
+		tracked_names = list(handler.config.tracked_point_names)
+		path = engine.save_labels(save_path)
+		if not path:
+			raise SessionError("Could not save labels to CSV.")
+		self.session.human_labels_path = path
+		self.session.tracked_point_names = tracked_names
+		self.session.labeled_frame_count = self._labeled_frame_count(engine)
+		self.session.status_message = f"Labels saved to {path}"
+		return self._finalize_session()
+
 	def close_labeler(self, save: bool, save_path: str | None = None) -> AppSession:
 		if not self.labeling_engine:
 			raise SessionError("Labeler is not open")
@@ -227,13 +251,7 @@ class SessionStore:
 		labeling_id = engine.session_id
 		handler = engine.video_handler.data_handler
 		tracked_names = list(handler.config.tracked_point_names)
-		mask = handler.dataframe.notna().any(axis=1)
-		if mask.any():
-			labeled_count = int(
-				handler.dataframe.index[mask].get_level_values("frame").nunique()
-			)
-		else:
-			labeled_count = 0
+		labeled_count = self._labeled_frame_count(engine)
 		path = engine.close(save=save, save_path=save_path)
 		if self.session.labeling_session_id != labeling_id:
 			if save and path:

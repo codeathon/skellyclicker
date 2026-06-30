@@ -65,10 +65,14 @@ class LabelingEngine(BaseModel):
 		return engine
 
 	def sync_active_point(self) -> None:
-		"""Align active bodypart with the current frame before labeling."""
+		"""Pick first unlabeled bodypart on session open only (not on every frame change)."""
 		self.video_handler.data_handler.reset_active_point_for_frame(
 			self.frame_number,
 		)
+
+	def save_labels(self, save_path: str | None = None) -> str:
+		"""Write human labels to CSV without closing the labeler session."""
+		return self.video_handler.save_labels(save_path)
 
 	def set_active_point(self, point_name: str) -> None:
 		self.video_handler.data_handler.set_active_point_by_name(point_name)
@@ -85,7 +89,6 @@ class LabelingEngine(BaseModel):
 			# Preview must not move the committed frame — only POST /labeling/frame does that.
 			if frame_number is not None and not preview:
 				self.frame_number = frame_number
-				self.sync_active_point()
 
 			prev_show = self.video_handler.show_machine_labels
 			prev_help = self.video_handler.image_annotator.config.show_help

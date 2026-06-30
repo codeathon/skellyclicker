@@ -157,3 +157,28 @@ def test_close_labeler_save_registers_human_labels(fresh_store, tmp_path):
 	assert fresh_store.session.machine_labels_path == "/tmp/machine.csv"
 	assert fresh_store.labeling_engine is None
 	assert "Labels saved to" in fresh_store.session.status_message
+
+
+def test_save_labeler_keeps_labeler_open(fresh_store, tmp_path):
+	"""Save writes CSV without closing the labeler session."""
+	from unittest.mock import MagicMock, patch
+
+	csv_path = tmp_path / "labels.csv"
+	csv_path.write_text("video,frame,nose_x,nose_y\ncam1,0,1.0,2.0\n")
+
+	mock_engine = MagicMock()
+	mock_engine.session_id = "label-session-1"
+	mock_engine.save_labels.return_value = str(csv_path)
+	mock_engine.video_handler.data_handler.config.tracked_point_names = ["nose"]
+
+	fresh_store.labeling_engine = mock_engine
+	fresh_store.session.labeling_session_id = "label-session-1"
+
+	with patch.object(fresh_store, "_labeled_frame_count", return_value=3):
+		fresh_store.save_labeler(save_path=str(csv_path))
+
+	mock_engine.save_labels.assert_called_once_with(str(csv_path))
+	assert fresh_store.labeling_engine is mock_engine
+	assert fresh_store.session.human_labels_path == str(csv_path)
+	assert fresh_store.session.labeled_frame_count == 3
+	assert "Labels saved to" in fresh_store.session.status_message

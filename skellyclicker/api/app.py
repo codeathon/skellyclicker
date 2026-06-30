@@ -68,6 +68,10 @@ class CloseLabelerBody(BaseModel):
 	save_path: str | None = None
 
 
+class SaveLabelerBody(BaseModel):
+	save_path: str | None = None
+
+
 class ClickBody(BaseModel):
 	x: int
 	y: int
@@ -318,6 +322,11 @@ def close_labeler(body: CloseLabelerBody) -> AppSession:
 	return store.close_labeler(save=body.save, save_path=body.save_path)
 
 
+@app.post("/api/labeling/save", response_model=AppSession)
+def save_labeler(body: SaveLabelerBody) -> AppSession:
+	return store.save_labeler(save_path=body.save_path)
+
+
 @app.get("/api/labeling/state")
 def labeling_state():
 	if not store.labeling_engine:
@@ -346,7 +355,6 @@ def set_frame(body: FrameBody):
 	if not store.labeling_engine:
 		raise HTTPException(status_code=400, detail="Labeler is not open")
 	store.labeling_engine.frame_number = body.frame_number
-	store.labeling_engine.sync_active_point()
 	return store.labeling_engine.state_dict()
 
 
