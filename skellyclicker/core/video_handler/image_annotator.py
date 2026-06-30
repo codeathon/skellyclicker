@@ -4,6 +4,14 @@ from pydantic import BaseModel
 
 from skellyclicker.core.video_handler.video_models import ClickData
 
+# Overlays were tuned for ~1080p cells; scale down on native high-res frames.
+OVERLAY_REFERENCE_HEIGHT = 1080
+
+
+def overlay_scale(image_height: int) -> float:
+    """Scale factor so markers/text match prior ~1080p labeler appearance."""
+    return min(1.0, OVERLAY_REFERENCE_HEIGHT / max(image_height, 1))
+
 
 def draw_doubled_text(image: np.ndarray,
                       text: str,
@@ -139,25 +147,26 @@ def _draw_label_legend(
     text_thickness: int,
     line_spacing: int,
     color: tuple[int, int, int] = (255, 255, 255),
+    scale: float = 1.0,
 ) -> None:
     """Bottom-right key: human diamonds vs machine crosses (matches overlay styles)."""
-    marker_x = x + 12
+    marker_x = x + max(8, int(12 * scale))
     row_h = line_spacing
-    marker_scale = max(1.0, font_scale)
+    text_x = x + max(20, int(32 * scale))
 
     _draw_legend_marker(
         image,
-        (marker_x, y + int(6 * marker_scale)),
+        (marker_x, y + max(4, int(6 * scale))),
         marker_type=cv2.MARKER_DIAMOND,
-        marker_size=int(14 * marker_scale),
+        marker_size=max(6, int(14 * scale)),
         marker_thickness=max(1, text_thickness),
         color=color,
     )
     draw_doubled_text(
         image=image,
         text="Human label",
-        x=x + 32,
-        y=y + int(10 * marker_scale),
+        x=text_x,
+        y=y + max(6, int(10 * scale)),
         font_scale=font_scale,
         color=color,
         thickness=text_thickness,
@@ -167,17 +176,17 @@ def _draw_label_legend(
     machine_y = y + row_h
     _draw_legend_marker(
         image,
-        (marker_x, machine_y + int(6 * marker_scale)),
+        (marker_x, machine_y + max(4, int(6 * scale))),
         marker_type=cv2.MARKER_CROSS,
-        marker_size=int(10 * marker_scale),
+        marker_size=max(5, int(10 * scale)),
         marker_thickness=max(1, text_thickness),
         color=color,
     )
     draw_doubled_text(
         image=image,
         text="Machine label",
-        x=x + 32,
-        y=machine_y + int(10 * marker_scale),
+        x=text_x,
+        y=machine_y + max(6, int(10 * scale)),
         font_scale=font_scale,
         color=color,
         thickness=text_thickness,
@@ -232,16 +241,22 @@ class ImageAnnotator(BaseModel):
         else:
             help_text = SHORT_HELP_TEXT
 
-        frame_x = (image.shape[1] // 10) * 8
-        frame_y = (image.shape[0] // 10) * 9
-        # Shared bottom-right HUD: legend + frame info (same size, white, left-aligned).
+        img_h, img_w = image.shape[:2]
+        scale = overlay_scale(img_h)
+        margin = max(8, int(12 * scale))
         hud_color = (255, 255, 255)
-        hud_font_scale = self.config.text_size * 1.15
-        hud_thickness = self.config.text_thickness
-        hud_line_spacing = int(38 * hud_font_scale)
+        hud_font_scale = self.config.text_size * 0.75 * scale
+        hud_thickness = max(1, int(round(self.config.text_thickness * scale)))
+        hud_line_spacing = max(14, int(32 * hud_font_scale))
+
+        # Bottom-right HUD stacked upward so legend stays on-screen at native resolution.
+        frame_x = max(margin, img_w - int(img_w * 0.22))
+        frame_block_lines = 2
+        legend_block_lines = 2 if self.config.show_legend else 0
+        frame_y = img_h - margin - hud_line_spacing * (frame_block_lines - 1)
+        legend_y = frame_y - hud_line_spacing * legend_block_lines
 
         if self.config.show_legend:
-            legend_y = frame_y - hud_line_spacing * 2
             _draw_label_legend(
                 image,
                 x=frame_x,
@@ -250,6 +265,7 @@ class ImageAnnotator(BaseModel):
                 text_thickness=hud_thickness,
                 line_spacing=hud_line_spacing,
                 color=hud_color,
+                scale=scale,
             )
 
         draw_doubled_text(
@@ -263,13 +279,18 @@ class ImageAnnotator(BaseModel):
             line_spacing=hud_line_spacing,
         )
 
-        draw_doubled_text(image=image,
-                          text=help_text,
-                          x=10,
-                          y=(image.shape[0] // 10) * 3,
-                          font_scale=self.config.text_size,
-                          color=self.config.text_color,
-                          thickness=self.config.text_thickness)
+        help_font = self.config.text_size * 0.65 * scale
+        help_thickness = max(1, int(round(self.config.text_thickness * scale)))
+        draw_doubled_text(
+            image=image,
+            text=help_text,
+            x=margin,
+            y=max(margin, int(img_h * 0.06)),
+            font_scale=help_font,
+            color=self.config.text_color,
+            thickness=help_thickness,
+            line_spacing=max(14, int(26 * help_font)),
+        )
         return image
 
     def annotate_single_image(
@@ -279,14 +300,18 @@ class ImageAnnotator(BaseModel):
             click_data: dict[str, ClickData] | None = None,
     ) -> np.ndarray:
         image_height, image_width = image.shape[:2]
-        text_offset = int(image_height * 0.05)
+        scale = overlay_scale(image_height)
+        text_offset = max(6, int(image_height * 0.04 * scale))
+        marker_size = max(6, int(round(self.config.marker_size * scale)))
+        marker_thickness = max(1, int(round(self.config.marker_thickness * scale)))
+        name_font = self.config.text_size * 0.55 * scale
+        status_font = self.config.text_size * 0.38 * scale
+        status_line_spacing = max(12, int(14 * scale))
 
         if click_data is None:
             click_data = {}
-        # Copy the original image for annotation
         annotated_image = image.copy()
         marker_colors = get_colors(self.config.tracked_points)
-        # Draw a marker for each click
         for point_name, click in click_data.items():
             marker_color = marker_colors.get(point_name, (255, 0, 255))
             cv2.drawMarker(
@@ -294,29 +319,29 @@ class ImageAnnotator(BaseModel):
                 position=(click.x, click.y),
                 color=(1, 1, 1),
                 markerType=self.config.marker_type,
-                markerSize=int(self.config.marker_size * 1.3),
-                thickness=int(self.config.marker_thickness * 1.3),
+                markerSize=int(marker_size * 1.3),
+                thickness=int(marker_thickness * 1.3),
             )
             cv2.drawMarker(
                 annotated_image,
                 position=(click.x, click.y),
                 color=marker_color,
                 markerType=self.config.marker_type,
-                markerSize=self.config.marker_size,
-                thickness=self.config.marker_thickness,
+                markerSize=marker_size,
+                thickness=marker_thickness,
             )
             if self.config.show_names:
-                draw_doubled_text(image=annotated_image,
-                                  text=point_name,
-                                  x=click.x + self.config.marker_size,
-                                  y=click.y - self.config.marker_size,
-                                  font_scale=self.config.text_size * .7,
-                                  color=marker_color,
-                                  thickness=1,
-                                  )
+                draw_doubled_text(
+                    image=annotated_image,
+                    text=point_name,
+                    x=click.x + marker_size,
+                    y=click.y - marker_size,
+                    font_scale=name_font,
+                    color=marker_color,
+                    thickness=max(1, marker_thickness),
+                )
 
         if self.config.show_clicks:
-            overlay_font = self.config.text_size * 0.45
             draw_doubled_text(
                 image=annotated_image,
                 text=_labels_overlay_text(
@@ -326,9 +351,9 @@ class ImageAnnotator(BaseModel):
                 ),
                 x=text_offset,
                 y=text_offset,
-                font_scale=overlay_font,
+                font_scale=status_font,
                 color=(255, 150, 55),
-                thickness=1,
-                line_spacing=16,
+                thickness=max(1, marker_thickness),
+                line_spacing=status_line_spacing,
             )
         return annotated_image
