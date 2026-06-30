@@ -10,6 +10,20 @@ function pathExists(session: AppSession, path: string | null | undefined): boole
   return check ? check.exists : null;
 }
 
+/** One status for the Videos row: all found, any missing, or none listed. */
+function videosExistStatus(session: AppSession): boolean | null {
+  const videos = session.videos;
+  if (!videos?.length) return null;
+  const checks = session.asset_path_checks?.filter((c) => c.kind === "video") ?? [];
+  if (checks.length > 0) {
+    return checks.every((c) => c.exists);
+  }
+  const statuses = videos.map((p) => pathExists(session, p));
+  if (statuses.some((s) => s === false)) return false;
+  if (statuses.every((s) => s === true)) return true;
+  return null;
+}
+
 function PathStatus({ exists }: { exists: boolean | null }) {
   if (exists === null) return null;
   return (
@@ -62,9 +76,10 @@ export function LoadedAssets({ session }: Props) {
         value={
           session.videos?.length ? `${session.videos.length} file(s)` : null
         }
+        exists={videosExistStatus(session)}
       />
       {session.videos?.map((p) => (
-        <Row key={p} label="" value={p} exists={pathExists(session, p)} />
+        <Row key={p} label="" value={p} />
       ))}
       <Row
         label="Human labels"
