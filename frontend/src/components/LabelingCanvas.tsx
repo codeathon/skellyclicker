@@ -403,25 +403,6 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 		return () => window.removeEventListener("keydown", onKey);
 	}, [state, closeLabeler, loadFrame, fetchAndPaintFrame, stopPlaying, togglePlaying]);
 
-	const selectReviewItem = useCallback(
-		async (index: number) => {
-			stopPlaying(false);
-			const gen = ++previewGenRef.current;
-			try {
-				const s = await client.selectReviewItem(index);
-				if (gen !== previewGenRef.current) return;
-				frameRef.current = s.frame_number;
-				setSliderFrame(s.frame_number);
-				setState(s);
-				await fetchAndPaintFrame(s.frame_number, false, gen);
-			} catch (err) {
-				if (isIgnorableFetchError(err)) return;
-				setError(err instanceof Error ? err.message : String(err));
-			}
-		},
-		[fetchAndPaintFrame, stopPlaying],
-	);
-
 	const onActivePoint = useCallback(
 		(pointName: string) => {
 			client
@@ -496,40 +477,6 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
 			<div className="labeling-body">
-				{state.review_mode && (
-					<aside className="labeling-review-queue" aria-label="Low confidence review">
-						<h3 className="labeling-hud-title">
-							Low confidence (&lt; {state.likelihood_threshold})
-						</h3>
-						{!state.has_likelihood_data && (
-							<p className="labeling-review-empty">
-								Re-run Analyze to include likelihood scores in machine labels.
-							</p>
-						)}
-						{state.has_likelihood_data && state.low_confidence_items.length === 0 && (
-							<p className="labeling-review-empty">No predictions below threshold.</p>
-						)}
-						<ul className="labeling-review-list">
-							{state.low_confidence_items.map((item, index) => (
-								<li key={`${item.frame_number}-${item.bodypart}-${index}`}>
-									<button
-										type="button"
-										className={`labeling-review-item${
-											state.selected_review_index === index
-												? " labeling-review-item--selected"
-												: ""
-										}`}
-										disabled={isClosing}
-										onClick={() => void selectReviewItem(index)}
-									>
-										Frame {item.frame_number + 1} · {item.bodypart} ·{" "}
-										{item.likelihood.toFixed(2)}
-									</button>
-								</li>
-							))}
-						</ul>
-					</aside>
-				)}
 				<div className="labeling-center">
 					<p className="labeling-labeled-count">
 						Labeled frames: {state.labeled_frames}
@@ -667,19 +614,34 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 				</aside>
 			</div>
 			<div className={`frame-scrubber${scrubbing ? " frame-scrubber--scrubbing" : ""}${playing ? " frame-scrubber--playing" : ""}`}>
-				<div className="frame-scrubber-controls">
+				<div className="frame-scrubber-row">
 					<button
 						type="button"
-						className="frame-play-btn"
+						className={`frame-play-btn${playing ? " frame-play-btn--pause" : ""}`}
 						disabled={isClosing || state.frame_count <= 1}
 						onClick={() => togglePlaying()}
+						aria-label={playing ? "Pause" : "Play"}
 						title={playing ? "Pause (Space)" : "Play (Space)"}
 					>
-						{playing ? "Pause" : "Play"}
+						<span className="frame-play-btn-icon" aria-hidden="true" />
 					</button>
-					<label htmlFor="frame-slider">
-						Frame {sliderFrame + 1} / {state.frame_count}
-					</label>
+					<input
+						id="frame-slider"
+						className="frame-scrubber-slider"
+						type="range"
+						min={0}
+						max={Math.max(0, state.frame_count - 1)}
+						value={sliderFrame}
+						disabled={isClosing}
+						onPointerDown={onScrubStart}
+						onInput={(e) => onSliderInput(Number(e.currentTarget.value))}
+						onChange={(e) => onSliderInput(Number(e.currentTarget.value))}
+						onPointerUp={(e) => onSliderCommit(Number(e.currentTarget.value))}
+						onPointerCancel={(e) => onSliderCommit(Number(e.currentTarget.value))}
+					/>
+					<span className="frame-scrubber-time">
+						{sliderFrame + 1} / {state.frame_count}
+					</span>
 				</div>
 				{playing && (
 					<p className="hint scrub-hint">Playing preview frames — pause to edit labels</p>
@@ -690,19 +652,6 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 				{scrubbing && !playing && !state.has_machine_labels && (
 					<p className="hint scrub-hint">Release slider to load full frame</p>
 				)}
-				<input
-					id="frame-slider"
-					type="range"
-					min={0}
-					max={Math.max(0, state.frame_count - 1)}
-					value={sliderFrame}
-					disabled={isClosing}
-					onPointerDown={onScrubStart}
-					onInput={(e) => onSliderInput(Number(e.currentTarget.value))}
-					onChange={(e) => onSliderInput(Number(e.currentTarget.value))}
-					onPointerUp={(e) => onSliderCommit(Number(e.currentTarget.value))}
-					onPointerCancel={(e) => onSliderCommit(Number(e.currentTarget.value))}
-				/>
 			</div>
 		</div>
 	);
