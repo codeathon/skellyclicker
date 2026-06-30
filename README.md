@@ -12,16 +12,76 @@ For labelling and training data through DeepLabCut.
 
     - `cd skellyclicker`
 
-3. Create a new conda environment from the environment yaml
+3. Create and activate the conda environment:
 
-    - `conda env create -f skellyclicker_env.yaml`
+    ```bash
+    conda env create -f skellyclicker_env.yaml
+    conda activate skellyclicker
+    ```
+
+4. Install the package (pulls in `uvicorn`, `fastapi`, `deeplabcut`, etc.):
+
+    ```bash
+    pip install -e .
+    ```
+
+5. **Ubuntu only:** install native file dialogs (web UI and legacy GUI):
+
+    ```bash
+    sudo apt install zenity python3-tk
+    ```
+
+    `zenity` is the primary file browser on Ubuntu. SkellyClicker must run on a machine
+    with a graphical desktop session (`DISPLAY` or `WAYLAND_DISPLAY` set). Dialogs open
+    on the Ubuntu box where the API runs. If server dialogs are unavailable, the web UI
+    falls back to the **browser's file picker** (files are uploaded to the server).
+
+### Troubleshooting
+
+**`ModuleNotFoundError: No module named 'uvicorn'`** (or `pandas`, `fastapi`, etc.)
+
+You are using a Python that does not have SkellyClicker installed. Fix:
+
+```bash
+conda activate skellyclicker   # must be active every new terminal
+cd /path/to/skellyclicker
+pip install -e .
+python -m skellyclicker.api
+```
+
+Confirm the right interpreter: `which python` should point inside your conda env
+(e.g. `.../envs/skellyclicker/bin/python`).
 
 ## How To Use
 
+### Web UI (recommended)
+
+1. Activate the environment and ensure dependencies are installed (see **Installation** above).
+
+2. Build the frontend (once, or after UI changes):
+
+    ```bash
+    cd frontend && npm install && npm run build && cd ..
+    ```
+
+3. Start the web server (opens your browser automatically):
+
+    ```bash
+    python -m skellyclicker.api
+    ```
+
+4. Follow the workflow: **Videos → DeepLabCut → Labels → Train & Analyze → Session**.
+
+   File pickers use native Ubuntu dialogs via zenity (or the browser file picker as fallback).
+   If dialogs are unavailable at startup, the server logs a warning.
+
+### Legacy Tk UI
+
 1. Activate the environment.
 
-2. Open the GUI.
-    - `python skellyclicker/__main__.py`
+2. Open the legacy GUI:
+
+    - `python -m skellyclicker`
 
 3. Start a new session or load an existing one.
     - When loading a session, look for the `.json` file you saved on a previous session.

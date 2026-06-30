@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -7,6 +6,7 @@ import numpy as np
 from pydantic import BaseModel
 
 from skellyclicker import VideoPathString
+from skellyclicker.core.human_labels_io import human_labels_csv_filename
 from skellyclicker.core.click_data_handler.click_handler import ClickHandler
 from skellyclicker.core.click_data_handler.data_handler import (
     DataHandler,
@@ -36,6 +36,7 @@ class VideoHandler(BaseModel):
     image_annotator: ImageAnnotator = ImageAnnotator()
     frame_count: int
     show_machine_labels: bool = False
+    machine_labels_path: str | None = None
     machine_labels_handler: DataHandler | None
     machine_labels_annotator: ImageAnnotator | None
 
@@ -44,7 +45,8 @@ class VideoHandler(BaseModel):
         cls,
         video_paths: list[str],
         max_window_size: tuple[int, int],
-        data_handler_path: str,
+        data_handler_path: str | None = None,
+        tracked_point_names: list[str] | None = None,
         machine_labels_path: str | None = None,
     ):
         video_paths = sorted(video_paths)
@@ -55,29 +57,40 @@ class VideoHandler(BaseModel):
             video_paths, max_window_size
         )
 
-        if Path(data_handler_path).suffix == ".json":
+        if data_handler_path and Path(data_handler_path).suffix == ".json":
             data_handler = DataHandler.from_config(
                 DataHandlerConfig.from_config_file(
                     videos=videos, config_path=data_handler_path
                 )
             )
-        elif Path(data_handler_path).suffix == ".csv":
-            data_handler = DataHandler.from_csv(data_handler_path)
-        else:
-            raise ValueError(f"Invalid data handler file: {data_handler_path}")
-
-        if machine_labels_path:
-            machine_labels_handler = DataHandler.from_csv(machine_labels_path)
-            machine_labels_annotator = ImageAnnotator(
-                config=ImageAnnotatorConfig(
-                    marker_type=cv2.MARKER_CROSS,
-                    marker_size=10,
-                    marker_thickness=1,
-                    tracked_points=data_handler.config.tracked_point_names,
-                    show_clicks=False,
+        elif data_handler_path and Path(data_handler_path).suffix == ".csv":
+            resolved_video_names = sorted(v.name for v in videos.values())
+            data_handler = DataHandler.from_csv(
+                data_handler_path,
+                video_names=resolved_video_names,
+                num_frames=frame_count,
+                tracked_point_names=tracked_point_names,
+            )
+        elif tracked_point_names:
+            # Empty click grid from session/DLC bodyparts — no tracked_points.json file.
+            data_handler = DataHandler.from_config(
+                DataHandlerConfig(
+                    num_frames=frame_count,
+                    video_names=sorted(v.name for v in videos.values()),
+                    tracked_point_names=tracked_point_names,
                 )
             )
         else:
+            raise ValueError(
+                "Provide a labels CSV/JSON path or tracked_point_names for bodyparts"
+            )
+
+        if machine_labels_path:
+            # Defer parsing dense post-analyze CSVs until overlay is actually shown.
+            machine_labels_handler = None
+            machine_labels_annotator = None
+        else:
+            machine_labels_path = None
             machine_labels_handler = None
             machine_labels_annotator = None
 
@@ -102,8 +115,31 @@ class VideoHandler(BaseModel):
             frame_count=frame_count,
             image_annotator=image_annotator,
             show_machine_labels=False,
+            machine_labels_path=machine_labels_path,
             machine_labels_handler=machine_labels_handler,
             machine_labels_annotator=machine_labels_annotator,
+        )
+
+    def ensure_machine_labels_loaded(self) -> None:
+        """Parse machine-label CSV on first overlay use (skipped at labeler open)."""
+        if self.machine_labels_handler is not None or not self.machine_labels_path:
+            return
+        video_names = sorted(v.name for v in self.videos.values())
+        handler = DataHandler.from_csv_overlay(
+            self.machine_labels_path,
+            video_names=video_names,
+            num_frames=self.frame_count,
+            tracked_point_names=self.data_handler.config.tracked_point_names,
+        )
+        self.machine_labels_handler = handler
+        self.machine_labels_annotator = ImageAnnotator(
+            config=ImageAnnotatorConfig(
+                marker_type=cv2.MARKER_CROSS,
+                marker_size=10,
+                marker_thickness=1,
+                tracked_points=self.data_handler.config.tracked_point_names,
+                show_clicks=False,
+            )
         )
 
     @classmethod
@@ -235,6 +271,7 @@ class VideoHandler(BaseModel):
     def copy_frame_data_from_machine_labels(
         self, frame_number: int, video_index: int
     ) -> None:
+        self.ensure_machine_labels_loaded()
         if self.machine_labels_handler is not None:
             machine_labels_data = self.machine_labels_handler.get_data_by_video_frame(
                     video_index=video_index, frame_number=frame_number
@@ -275,21 +312,28 @@ class VideoHandler(BaseModel):
                 if annotate_images:
                     image = self.image_annotator.annotate_single_image(
                         image,
+                        active_point=self.data_handler.active_point,
                         click_data=self.data_handler.get_data_by_video_frame(
                             video_index=video_index, frame_number=frame_number
                         ),
                     )
-                    if (
-                        self.show_machine_labels
-                        and self.machine_labels_handler is not None
-                        and self.machine_labels_annotator is not None
-                    ):
-                        image = self.machine_labels_annotator.annotate_single_image(
-                            image,
-                            click_data=self.machine_labels_handler.get_data_by_video_frame(
-                                video_index=video_index, frame_number=frame_number
-                            ),
-                        )
+                # Machine overlay is shown during scrub preview (annotate_images=False).
+                if (
+                    self.show_machine_labels
+                    and self.machine_labels_path
+                ):
+                    self.ensure_machine_labels_loaded()
+                if (
+                    self.show_machine_labels
+                    and self.machine_labels_handler is not None
+                    and self.machine_labels_annotator is not None
+                ):
+                    image = self.machine_labels_annotator.annotate_single_image(
+                        image,
+                        click_data=self.machine_labels_handler.get_data_by_video_frame(
+                            video_index=video_index, frame_number=frame_number
+                        ),
+                    )
 
                 if zoom_state.scale > 1.0:
                     # Calculate zoomed dimensions
@@ -398,16 +442,14 @@ class VideoHandler(BaseModel):
     ) -> str | None:
         """Clean up resources."""
         logger.info("VideoHandler closing")
-        for video in self.videos.values():
-            video.cap.release()
-
+        saved_path: str | None = None
         if save_data is True:
-            save_path = self._save_data(save_pathstring=save_path)
+            saved_path = self._save_data(save_pathstring=save_path)
         elif save_data is None:
             while True:
                 save_data_input = input("Save data? (yes/no): ")
                 if save_data_input.lower() == "yes" or save_data_input.lower() == "y":
-                    save_path = self._save_data(save_pathstring=save_path)
+                    saved_path = self._save_data(save_pathstring=save_path)
                     break
                 else:
                     confirmation = input(
@@ -415,26 +457,25 @@ class VideoHandler(BaseModel):
                     )
                     if confirmation == "no" or confirmation == "n":
                         logger.info("Data not saved.")
-                        save_path = None
+                        saved_path = None
                         break
-        else:
-            save_path = None
+        for video in self.videos.values():
+            video.cap.release()
 
-        return save_path
+        return saved_path
 
     def _save_data(self, save_pathstring: str | None = None) -> str:
         if save_pathstring is None:
-            save_path = Path(self.video_folder).parent / "skellyclicker_data"
+            # Default next to the loaded videos so labels are easy to find.
+            save_path = Path(self.video_folder) / "skellyclicker_data"
             save_path.mkdir(exist_ok=True, parents=True)
         else:
             save_path = Path(save_pathstring)
 
         if save_path.is_dir():
             save_path.mkdir(exist_ok=True, parents=True)
-            csv_path = save_path / (
-                datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                + "_skellyclicker_output.csv"
-            )
+            video_names = sorted(v.name for v in self.videos.values())
+            csv_path = save_path / human_labels_csv_filename(video_names)
         else:
             csv_path = save_path
 

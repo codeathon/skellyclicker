@@ -7,10 +7,26 @@ requires-python = ">=3.10"
 dependencies = [
     "colorbrewer>=0.3",
     "deeplabcut==3.0.0rc13",
+    "fastapi>=0.115.0",
     "numpy==1.26.2",
     "opencv-contrib-python>=4.8.1.78",
     "pandas==2.1.4",
     "pillow>=11.1.0",
     "pydantic==2.11.0",
     "pyyaml>=6.0.2",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.9",
+    "websockets>=13.0",
 ]
+
+[project.scripts]
+skellyclicker-web = "skellyclicker.api.__main__:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["skellyclicker*"]
+exclude = ["frontend*", "test*"]

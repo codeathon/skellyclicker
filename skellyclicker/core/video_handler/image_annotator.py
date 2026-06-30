@@ -43,6 +43,17 @@ FULL_HELP_TEXT = (
     "You will be prompted to save the data in the terminal."
 )
 
+# Web labeler shortcuts (subset of desktop OpenCV viewer).
+WEB_FULL_HELP_TEXT = (
+    "Click the video to place the active bodypart.\n"
+    "Use 'a' / 'd' or arrow keys for previous / next frame.\n"
+    "Drag the frame slider to scrub previews.\n"
+    "Press 'm' to toggle machine label overlay.\n"
+    "Press 'h' to hide this help.\n"
+    "Press Esc to close (prompts to save).\n"
+    "Use Save & Close or Close without Saving."
+)
+
 
 def hsv_to_rgb(hsv: np.ndarray) -> np.ndarray:
     """Convert HSV color to RGB."""
@@ -86,6 +97,111 @@ def get_colors(keys: list[str]) -> dict[str, tuple[int, ...]]:
     return colors
 
 
+def _comma_array(names: list[str]) -> str:
+    """Compact list for on-frame overlay, e.g. [p1, p2, p3]."""
+    return "[" + ", ".join(names) + "]"
+
+
+def _draw_legend_marker(
+    image: np.ndarray,
+    center: tuple[int, int],
+    *,
+    marker_type: int,
+    marker_size: int,
+    marker_thickness: int,
+    color: tuple[int, int, int],
+) -> None:
+    """Sample marker for the on-frame legend (white halo + colored shape)."""
+    cv2.drawMarker(
+        image,
+        position=center,
+        color=(1, 1, 1),
+        markerType=marker_type,
+        markerSize=int(marker_size * 1.3),
+        thickness=int(marker_thickness * 1.3),
+    )
+    cv2.drawMarker(
+        image,
+        position=center,
+        color=color,
+        markerType=marker_type,
+        markerSize=marker_size,
+        thickness=marker_thickness,
+    )
+
+
+def _draw_label_legend(
+    image: np.ndarray,
+    *,
+    x: int,
+    y: int,
+    font_scale: float,
+    text_thickness: int,
+    line_spacing: int,
+    color: tuple[int, int, int] = (255, 255, 255),
+) -> None:
+    """Bottom-right key: human diamonds vs machine crosses (matches overlay styles)."""
+    marker_x = x + 12
+    row_h = line_spacing
+    marker_scale = max(1.0, font_scale)
+
+    _draw_legend_marker(
+        image,
+        (marker_x, y + int(6 * marker_scale)),
+        marker_type=cv2.MARKER_DIAMOND,
+        marker_size=int(14 * marker_scale),
+        marker_thickness=max(1, text_thickness),
+        color=color,
+    )
+    draw_doubled_text(
+        image=image,
+        text="Human label",
+        x=x + 32,
+        y=y + int(10 * marker_scale),
+        font_scale=font_scale,
+        color=color,
+        thickness=text_thickness,
+        line_spacing=row_h,
+    )
+
+    machine_y = y + row_h
+    _draw_legend_marker(
+        image,
+        (marker_x, machine_y + int(6 * marker_scale)),
+        marker_type=cv2.MARKER_CROSS,
+        marker_size=int(10 * marker_scale),
+        marker_thickness=max(1, text_thickness),
+        color=color,
+    )
+    draw_doubled_text(
+        image=image,
+        text="Machine label",
+        x=x + 32,
+        y=machine_y + int(10 * marker_scale),
+        font_scale=font_scale,
+        color=color,
+        thickness=text_thickness,
+        line_spacing=row_h,
+    )
+
+
+def _labels_overlay_text(
+    tracked_points: list[str],
+    click_data: dict[str, ClickData],
+    active_point: str | None,
+) -> str:
+    """Human-label status: placed on this frame vs still available to click."""
+    placed = [p for p in tracked_points if p in click_data]
+    available = [p for p in tracked_points if p not in click_data]
+    lines: list[str] = []
+    if placed:
+        lines.append(f"On frame: {_comma_array(placed)}")
+    lines.append(f"Labels available: {_comma_array(available)}")
+    if active_point:
+        lines.append(f"active: {active_point}")
+    return "\n".join(lines)
+
+
 class ImageAnnotatorConfig(BaseModel):
     marker_type: int = cv2.MARKER_DIAMOND
     marker_size: int = 15
@@ -97,8 +213,10 @@ class ImageAnnotatorConfig(BaseModel):
     text_font: int = cv2.FONT_HERSHEY_SIMPLEX
 
     show_help: bool = False
+    web_help: bool = False
     show_clicks: bool = True
     show_names: bool = True
+    show_legend: bool = True
     tracked_points: list[str] = []
 
 
@@ -110,16 +228,40 @@ class ImageAnnotator(BaseModel):
                             active_point: str,
                             frame_number: int) -> np.ndarray:
         if self.config.show_help:
-            help_text = FULL_HELP_TEXT
+            help_text = WEB_FULL_HELP_TEXT if self.config.web_help else FULL_HELP_TEXT
         else:
             help_text = SHORT_HELP_TEXT
-        draw_doubled_text(image=image,
-                          text=f"Frame Number: {frame_number}\n {active_point}",
-                          x=(image.shape[1] // 10) * 8,
-                          y=(image.shape[0] // 10) * 9,
-                          font_scale=self.config.text_size,
-                          color=(255,0,255),
-                          thickness=self.config.text_thickness)
+
+        frame_x = (image.shape[1] // 10) * 8
+        frame_y = (image.shape[0] // 10) * 9
+        # Shared bottom-right HUD: legend + frame info (same size, white, left-aligned).
+        hud_color = (255, 255, 255)
+        hud_font_scale = self.config.text_size * 1.15
+        hud_thickness = self.config.text_thickness
+        hud_line_spacing = int(38 * hud_font_scale)
+
+        if self.config.show_legend:
+            legend_y = frame_y - hud_line_spacing * 2
+            _draw_label_legend(
+                image,
+                x=frame_x,
+                y=legend_y,
+                font_scale=hud_font_scale,
+                text_thickness=hud_thickness,
+                line_spacing=hud_line_spacing,
+                color=hud_color,
+            )
+
+        draw_doubled_text(
+            image=image,
+            text=f"Frame Number: {frame_number}\n {active_point}",
+            x=frame_x,
+            y=frame_y,
+            font_scale=hud_font_scale,
+            color=hud_color,
+            thickness=hud_thickness,
+            line_spacing=hud_line_spacing,
+        )
 
         draw_doubled_text(image=image,
                           text=help_text,
@@ -174,25 +316,19 @@ class ImageAnnotator(BaseModel):
                                   )
 
         if self.config.show_clicks:
-            # List the markers on the image, with a check or x based on if they are labeled
-            label_string = ""
-            for tracked_point in self.config.tracked_points:
-                if tracked_point in click_data:
-                    label_string += f"{tracked_point}: {click_data[tracked_point].x}, {click_data[tracked_point].y} "
-                else:
-                    label_string += f"{tracked_point}: (?, ?) "
-
-                if active_point and tracked_point == active_point:
-                    label_string += " <-(active)"
-                label_string += "\n"
-
-            draw_doubled_text(image=annotated_image,
-                            text=label_string,
-                            x=text_offset,
-                            y=text_offset,
-                            font_scale=self.config.text_size*.75,
-                            color= (255, 150, 55),
-                            thickness=self.config.text_thickness,
-                            line_spacing=30,
-                            )
+            overlay_font = self.config.text_size * 0.45
+            draw_doubled_text(
+                image=annotated_image,
+                text=_labels_overlay_text(
+                    self.config.tracked_points,
+                    click_data,
+                    active_point,
+                ),
+                x=text_offset,
+                y=text_offset,
+                font_scale=overlay_font,
+                color=(255, 150, 55),
+                thickness=1,
+                line_spacing=16,
+            )
         return annotated_image

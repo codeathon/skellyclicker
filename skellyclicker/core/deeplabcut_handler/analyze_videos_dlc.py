@@ -12,6 +12,8 @@
 #
 
 from __future__ import annotations
+
+from collections.abc import Callable
 from multiprocessing import Pool
 import torch.multiprocessing as mp
 
@@ -72,6 +74,7 @@ def analyze_videos_dlc(
     overwrite: bool = False,
     save_as_df: bool = False,
     multiprocess: bool = True,
+    progress_callback: Callable[[float, str], None] | None = None,
     **torch_kwargs,
 ):
     """Makes prediction based on a trained network.
@@ -296,7 +299,31 @@ def analyze_videos_dlc(
 
     # Load the project configuration
     cfg = auxiliaryfunctions.read_config(config)
-    project_path = Path(cfg["project_path"])
+    # Model weights live under the config.yaml directory, not necessarily cfg["project_path"]
+    # (which can be stale/relative and causes deep wrong paths to pytorch_config.yaml).
+    config_path = Path(config).expanduser().resolve()
+    project_path = config_path.parent
+    yaml_project_path = Path(cfg["project_path"]).expanduser()
+    try:
+        if project_path != yaml_project_path.resolve():
+            print(
+                f"Note: config.yaml project_path ({yaml_project_path}) differs from "
+                f"config directory ({project_path}); using config directory for models."
+            )
+    except (OSError, RuntimeError):
+        pass
+
+    from skellyclicker.services.dlc_paths import resolve_analyze_iteration
+
+    analyze_iteration = resolve_analyze_iteration(project_path, cfg)
+    if analyze_iteration != int(cfg["iteration"]):
+        print(
+            f"Using dlc-models-pytorch/iteration-{analyze_iteration} for analyze "
+            f"(config.yaml iteration is {cfg['iteration']})"
+        )
+    cfg = dict(cfg)
+    cfg["iteration"] = analyze_iteration
+
     train_fraction = cfg["TrainingFraction"][trainingsetindex]
     model_folder = project_path / auxiliaryfunctions.get_model_folder(
         train_fraction,
@@ -309,6 +336,12 @@ def analyze_videos_dlc(
 
     # Read the inference configuration, load the model
     model_cfg_path = train_folder / Engine.PYTORCH.pose_cfg_name
+    print(f"Loading PyTorch model config: {model_cfg_path}")
+    if not model_cfg_path.is_file():
+        raise FileNotFoundError(
+            f"PyTorch model config not found: {model_cfg_path}. "
+            f"Train the network for iteration-{analyze_iteration} first."
+        )
     model_cfg = auxiliaryfunctions.read_plainconfig(model_cfg_path)
     pose_task = Task(model_cfg["method"])
 
@@ -432,7 +465,22 @@ def analyze_videos_dlc(
         )
         for video in videos
     ]
-    if multiprocess:
+    if progress_callback is not None:
+        # Sequential + tqdm hook — multiprocessing cannot share progress to the web UI.
+        from skellyclicker.core.deeplabcut_handler.dlc_progress import hook_dlc_tqdm
+
+        num_passes = 2 if detector_runner is not None else 1
+        for video_index, arg in enumerate(args):
+            video = arg[-1]
+            with hook_dlc_tqdm(
+                progress_callback,
+                video_index,
+                len(args),
+                video.name,
+                num_passes=num_passes,
+            ):
+                analyze_single_video_dlc(*arg)
+    elif multiprocess:
         try:
             with Pool(processes=len(videos)) as pool:
                 pool.starmap(

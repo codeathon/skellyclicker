@@ -88,7 +88,7 @@ class SkellyClickerUIView:
     deeplabcut_save_epochs_var: tk.IntVar = field(default_factory=lambda: tk.IntVar(value=20))
     deeplabcut_batch_size_label: tk.Label = None
     deeplabcut_batch_size_spinbox: tk.Spinbox = None
-    deeplabcut_batch_size_var: tk.IntVar = field(default_factory=lambda: tk.IntVar(value=1))
+    deeplabcut_batch_size_var: tk.IntVar = field(default_factory=lambda: tk.IntVar(value=8))
 
     # Save section
     save_options_frame: tk.Frame = None

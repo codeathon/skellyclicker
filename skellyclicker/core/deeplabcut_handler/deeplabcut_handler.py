@@ -2,6 +2,7 @@ from datetime import datetime
 import json
 import logging
 import math
+from collections.abc import Callable
 import cv2
 import deeplabcut
 from deeplabcut import DEBUG
@@ -24,6 +25,10 @@ from skellyclicker.core.deeplabcut_handler.create_deeplabcut.deelabcut_project_c
     DeeplabcutTrainingConfig,
 )
 from skellyclicker.core.deeplabcut_handler.analyze_videos_dlc import analyze_videos_dlc
+from skellyclicker.core.deeplabcut_handler.dlc_csv_io import (
+	dlc_analysis_csv_to_skellyclicker,
+	iter_dlc_video_csvs,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -124,7 +129,12 @@ class DeeplabcutHandler(BaseModel):
         labels_csv_path: str,
         video_paths: list[str],
         training_config: DeeplabcutTrainingConfig | None = None,
+        progress_callback: Callable[[float | None, str], None] | None = None,
     ):
+        def report(fraction: float | None, message: str) -> None:
+            if progress_callback:
+                progress_callback(fraction, message)
+
         if training_config is None:
             training_config = DeeplabcutTrainingConfig()
 
@@ -143,14 +153,14 @@ class DeeplabcutHandler(BaseModel):
             )
             self._bump_iteration()
 
-        logger.info("Processing labeled frames...")
+        report(0.05, "Processing labeled frames…")
         fill_in_labelled_data_folder(
             path_to_videos_for_training=str(video_folder),
             path_to_dlc_project_folder=str(parent_directory),
             path_to_image_labels_csv=labels_csv_path,
         )
 
-        logger.info(f"Creating training dataset with net type: {training_config.model_type}...")
+        report(0.15, f"Creating training dataset ({training_config.model_type})…")
         deeplabcut.create_training_dataset(self.project_config_path, net_type=training_config.model_type)
         # deeplabcut.create_training_model_comparison(self.project_config_path, net_types=["resnet_50", "rtmpose_x"])
 
@@ -170,15 +180,25 @@ class DeeplabcutHandler(BaseModel):
             pytorch_cfg_updates["data.train.hflip"] = True
         logger.info("Training model...")
         logger.info(f"With config: epochs={training_config.epochs}, save epochs={training_config.save_epochs}, batch_size={training_config.batch_size}, learning_rate={training_config.learning_rate}")
-        start_time = perf_counter_ns()
-        deeplabcut.train_network(
-            self.project_config_path,
-            epochs=training_config.epochs,
-            save_epochs=training_config.save_epochs,
-            batch_size=training_config.batch_size,
-            pytorch_cfg_updates=pytorch_cfg_updates
+        report(
+            0.15,
+            f"Training network ({training_config.epochs} epochs)…",
         )
+        start_time = perf_counter_ns()
+        from skellyclicker.core.deeplabcut_handler.dlc_progress import (
+            hook_dlc_training_progress,
+        )
+
+        with hook_dlc_training_progress(report):
+            deeplabcut.train_network(
+                self.project_config_path,
+                epochs=training_config.epochs,
+                save_epochs=training_config.save_epochs,
+                batch_size=training_config.batch_size,
+                pytorch_cfg_updates=pytorch_cfg_updates
+            )
         end_time = perf_counter_ns()
+        report(1.0, "Training finished")
         print(f"Model training took {(end_time-start_time)/1e9} seconds over {training_config.epochs} epochs ({(end_time-start_time)/(1e9*training_config.epochs)} s per epoch)")
 
     def analyze_videos(
@@ -187,22 +207,40 @@ class DeeplabcutHandler(BaseModel):
         output_folder: str | Path,
         annotate_videos: bool = False,
         filter_videos: bool = True,
+        progress_callback: Callable[[float | None, str], None] | None = None,
     ) -> str:
+        from skellyclicker.services.dlc_paths import (
+            dlc_project_dir,
+            resolve_analyze_iteration,
+        )
+
+        def report(fraction: float | None, message: str) -> None:
+            if progress_callback:
+                progress_callback(fraction, message)
+
+        project_dir = dlc_project_dir(self.project_config_path)
         config = auxiliaryfunctions.read_config(self.project_config_path)
+        analyze_iteration = resolve_analyze_iteration(project_dir, config)
+        self.iteration = analyze_iteration
         Path(output_folder).mkdir(parents=True, exist_ok=True)
 
+        n_videos = max(len(video_paths), 1)
+        report(0.05, f"Analyzing {n_videos} video(s)…")
         analyze_videos_dlc(
             config=str(self.project_config_path),
             videos=video_paths,
             videotype=".mp4",
             save_as_csv=True,
-            destfolder = str(output_folder),
-            batch_size=8,  # 16 is too high for 5 mocap videos
-            multiprocess=True,
-            overwrite=True
+            destfolder=str(output_folder),
+            batch_size=8,
+            multiprocess=progress_callback is None,
+            overwrite=True,
+            progress_callback=progress_callback,
         )
+        report(0.75, "Inference complete")
 
         if filter_videos:
+            report(0.78, "Filtering predictions…")
             deeplabcut.filterpredictions(
                 str(self.project_config_path),
                 video_paths,
@@ -212,9 +250,10 @@ class DeeplabcutHandler(BaseModel):
                 destfolder=str(output_folder),
             )
 
+        report(0.86, "Plotting trajectories…")
         deeplabcut.plot_trajectories(config=self.project_config_path, videos=video_paths, filtered=filter_videos, destfolder=str(output_folder))
 
-        csv_path = Path(output_folder) / f"skellyclicker_machine_labels_iteration_{config['iteration']}.csv"
+        csv_path = Path(output_folder) / f"skellyclicker_machine_labels_iteration_{analyze_iteration}.csv"
 
         video_folders = set(Path(video_path).parent for video_path in video_paths)
         if len(video_folders) > 1:
@@ -239,6 +278,7 @@ class DeeplabcutHandler(BaseModel):
             json.dump(metadata, f, indent=2)
         print(f"Saved annotation metadata to {metadata_path}")
 
+        report(0.92, "Merging machine labels CSV…")
         self.merge_csvs_for_skellyclicker(
             csv_folder_path=str(output_folder),
             output_path=str(csv_path),
@@ -246,6 +286,7 @@ class DeeplabcutHandler(BaseModel):
         )
 
         if annotate_videos:
+            report(0.96, "Annotating videos…")
             self.annotate_videos(
                 output_path=str(output_folder),
                 csv_path=str(csv_path),
@@ -259,53 +300,25 @@ class DeeplabcutHandler(BaseModel):
     def merge_csvs_for_skellyclicker(
         self, csv_folder_path: str | Path, output_path: str | Path, filtered: bool = False
     ):
-        dataframe_list = []
         csv_folder_path = Path(csv_folder_path)
-        if filtered:
-            csv_paths = csv_folder_path.glob("*_filtered.csv")
-        else:
-            csv_paths = set(csv_folder_path.glob("*.csv")).difference(set(csv_folder_path.glob("*_filtered.csv")))
+        csv_paths = iter_dlc_video_csvs(csv_folder_path, filtered=filtered)
         if not csv_paths:
             raise FileNotFoundError(
                 f"No matching CSV files found in {csv_folder_path}. Please check the path."
             )
-        csv_paths = set(csv_paths).difference(set(csv_folder_path.glob(".csv")))
-        csv_paths = sorted(list(csv_paths))
+
+        dataframe_list = []
         for csv in csv_paths:
-            df = pd.read_csv(csv)
-
             video_name = Path(csv).name.split("DLC_")[0]
-
-            bodyparts = df.iloc[0, :].unique()[1:]
-
-            column_names = ["frame"]
-            for bodypart in bodyparts:
-                column_names.extend(
-                    [f"{bodypart}_x", f"{bodypart}_y", f"{bodypart}_likelihood"]
-                )
-
-            df.columns = column_names
-
-            # remove first two rows
-            df = df.iloc[2:, :]
-            # TODO: consider filtering for confidence
-
-            df = df.drop(columns=[f"{bodypart}_likelihood" for bodypart in bodyparts])
-
-            df["video"] = video_name
-
-            # set frames and video as multi index
-            df = df.set_index(["video", "frame"])
-
-            print(df.head())
-
-            dataframe_list.append(df)
+            if not video_name.endswith((".mp4", ".avi")):
+                video_name = f"{video_name}.mp4"
+            dataframe_list.append(
+                dlc_analysis_csv_to_skellyclicker(csv, video_name=video_name)
+            )
 
         df = pd.concat(dataframe_list)
-        print(df)
-
         df.to_csv(output_path)
-        print(f"Saved skellyclicker compatible CSV to {output_path}")
+        logger.info("Saved skellyclicker compatible CSV to %s", output_path)
 
     def annotate_videos(self, output_path: str | Path, video_paths: list[Path], csv_path: str | Path):
         print(

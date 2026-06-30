@@ -7,10 +7,62 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict
 
 from skellyclicker import VideoNameString, PointNameString
+from skellyclicker.core.session_validation import bodypart_names_from_csv_columns
 from skellyclicker.core.video_handler.video_models import ClickData, VideoPlaybackState, VideoMetadata, \
     VideoScalingParameters
 
 logger = logging.getLogger(__name__)
+
+
+def align_label_video_names(
+	csv_video_names: list[str],
+	session_video_names: list[str],
+) -> dict[str, str]:
+	"""Map CSV video column values onto the session's loaded video basenames."""
+	csv_sorted = sorted(set(csv_video_names))
+	session_sorted = sorted(set(session_video_names))
+	if csv_sorted == session_sorted:
+		return {name: name for name in csv_video_names}
+
+	mapping: dict[str, str] = {}
+	unmatched_csv = list(csv_sorted)
+	unmatched_session = list(session_sorted)
+
+	# Exact or stem match (same clip, different path/extension in CSV vs session).
+	for csv_name in list(unmatched_csv):
+		csv_stem = Path(csv_name).stem
+		for session_name in list(unmatched_session):
+			if (
+				csv_name == session_name
+				or Path(session_name).stem == csv_stem
+			):
+				mapping[csv_name] = session_name
+				unmatched_csv.remove(csv_name)
+				unmatched_session.remove(session_name)
+				break
+
+	# Same camera count — align sorted lists (legacy sessions often rename files).
+	if len(unmatched_csv) == len(unmatched_session) and unmatched_csv:
+		for csv_name, session_name in zip(unmatched_csv, unmatched_session):
+			mapping[csv_name] = session_name
+	elif len(session_sorted) == 1 and len(csv_sorted) == 1:
+		mapping[csv_sorted[0]] = session_sorted[0]
+
+	return mapping
+
+
+def _remap_sparse_video_index(
+	sparse: pd.DataFrame,
+	video_map: dict[str, str],
+) -> pd.DataFrame:
+	if not video_map:
+		return sparse
+	remapped = sparse.copy()
+	remapped.index = pd.MultiIndex.from_tuples(
+		[(video_map.get(video, video), frame) for video, frame in sparse.index],
+		names=sparse.index.names,
+	)
+	return remapped[~remapped.index.duplicated(keep="first")]
 
 
 class DataHandlerConfig(BaseModel):
@@ -33,17 +85,12 @@ class DataHandlerConfig(BaseModel):
 
     @classmethod
     def from_dataframe(cls, dataframe: pd.DataFrame):
-        tracked_point_names = []
-        seen = set()
-        for name in dataframe.columns:
-            name = name.removesuffix("_x").removesuffix("_y")
-            if name not in seen:
-                seen.add(name)
-                tracked_point_names.append(name)
-        tracked_point_names = list(tracked_point_names)
+        tracked_point_names = bodypart_names_from_csv_columns(list(dataframe.columns))
         logger.debug(f"Found tracked point names in dataframe: {tracked_point_names}")
+        frame_vals = dataframe.index.get_level_values("frame")
+        num_frames = int(frame_vals.max()) + 1 if len(frame_vals) else 1
         return cls(
-            num_frames=dataframe.index.get_level_values("frame").max(),
+            num_frames=num_frames,
             video_names=sorted(dataframe.index.get_level_values("video").unique().tolist()),
             tracked_point_names=tracked_point_names,
         )
@@ -68,16 +115,112 @@ class DataHandler(BaseModel):
         )
 
     @classmethod
-    def from_csv(cls, input_path: str | Path):
-        dataframe = pd.read_csv(input_path)
-        dataframe["video"] = dataframe["video"].astype(str)
-        dataframe = dataframe.set_index(["video", "frame"])
+    def from_csv(
+        cls,
+        input_path: str | Path,
+        *,
+        video_names: list[str] | None = None,
+        num_frames: int | None = None,
+        tracked_point_names: list[str] | None = None,
+    ):
+        raw = pd.read_csv(input_path)
+        raw["video"] = raw["video"].astype(str)
+        csv_bodyparts = bodypart_names_from_csv_columns(list(raw.columns))
+        sparse = raw.set_index(["video", "frame"])
+        # DLC analyze output can repeat (video, frame) rows — keep first.
+        sparse = sparse[~sparse.index.duplicated(keep="first")]
 
-        config = DataHandlerConfig.from_dataframe(dataframe)
+        if tracked_point_names:
+            # Keep DLC/session bodypart order; append any extras found in the CSV.
+            names = list(tracked_point_names)
+            for bp in csv_bodyparts:
+                if bp not in names:
+                    names.append(bp)
+        else:
+            names = csv_bodyparts
+
+        if not names:
+            raise ValueError(f"No bodyparts found in labels CSV: {input_path}")
+
+        if video_names is None:
+            video_names = sorted(sparse.index.get_level_values("video").unique().tolist())
+        if num_frames is None:
+            frame_vals = sparse.index.get_level_values("frame")
+            num_frames = int(frame_vals.max()) + 1 if len(frame_vals) else 1
+
+        config = DataHandlerConfig(
+            num_frames=num_frames,
+            video_names=video_names,
+            tracked_point_names=names,
+        )
+        dataframe = cls._create_dataframe(config)
+        common_cols = [c for c in sparse.columns if c in dataframe.columns]
+        if common_cols:
+            # Vectorized merge — nested .at loops are unusably slow on dense DLC CSVs.
+            aligned = sparse[common_cols].reindex(dataframe.index)
+            dataframe[common_cols] = aligned.to_numpy()
+
         return cls(
             config=config,
             dataframe=dataframe,
-            active_point=config.tracked_point_names[0],
+            active_point=names[0],
+        )
+
+    @classmethod
+    def from_csv_overlay(
+        cls,
+        input_path: str | Path,
+        *,
+        video_names: list[str] | None = None,
+        num_frames: int | None = None,
+        tracked_point_names: list[str] | None = None,
+    ) -> "DataHandler":
+        """Load machine-prediction CSV without allocating a full video×frame grid."""
+        raw = pd.read_csv(input_path)
+        raw["video"] = raw["video"].astype(str)
+        csv_bodyparts = bodypart_names_from_csv_columns(list(raw.columns))
+        sparse = raw.set_index(["video", "frame"])
+        sparse = sparse[~sparse.index.duplicated(keep="first")]
+
+        if tracked_point_names:
+            names = list(tracked_point_names)
+            for bp in csv_bodyparts:
+                if bp not in names:
+                    names.append(bp)
+        else:
+            names = csv_bodyparts
+
+        if not names:
+            raise ValueError(f"No bodyparts found in labels CSV: {input_path}")
+
+        csv_video_names = sorted(
+            sparse.index.get_level_values("video").unique().tolist()
+        )
+        if video_names is None:
+            video_names = csv_video_names
+        else:
+            video_map = align_label_video_names(csv_video_names, video_names)
+            sparse = _remap_sparse_video_index(sparse, video_map)
+        if num_frames is None:
+            frame_vals = sparse.index.get_level_values("frame")
+            num_frames = int(frame_vals.max()) + 1 if len(frame_vals) else 1
+
+        wanted_cols = []
+        for point_name in names:
+            wanted_cols.append(f"{point_name}_x")
+            wanted_cols.append(f"{point_name}_y")
+        overlay_cols = [c for c in wanted_cols if c in sparse.columns]
+        dataframe = sparse[overlay_cols] if overlay_cols else sparse.iloc[:, 0:0]
+
+        config = DataHandlerConfig(
+            num_frames=num_frames,
+            video_names=sorted(video_names),
+            tracked_point_names=names,
+        )
+        return cls(
+            config=config,
+            dataframe=dataframe,
+            active_point=names[0],
         )
 
     @staticmethod
@@ -116,6 +259,26 @@ class DataHandler(BaseModel):
         self.active_point = self.config.tracked_point_names[new_position]
         logger.debug(f"Active point set to {self.active_point}")
 
+    def point_is_labeled(self, video_index: int, frame_number: int, point_name: str) -> bool:
+        video_name = self.config.video_names[video_index]
+        try:
+            row = self.dataframe.loc[(video_name, frame_number)]
+        except KeyError:
+            return False
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        x = row[f"{point_name}_x"]
+        y = row[f"{point_name}_y"]
+        return bool(pd.notna(x) and pd.notna(y))
+
+    def reset_active_point_for_frame(self, frame_number: int, video_index: int = 0) -> None:
+        """Select first unlabeled bodypart on this frame, or the first bodypart when fresh."""
+        for name in self.config.tracked_point_names:
+            if not self.point_is_labeled(video_index, frame_number, name):
+                self.active_point = name
+                return
+        self.active_point = self.config.tracked_point_names[0]
+
     def update_dataframe(self, click_data: ClickData, point_name: str | None = None):
         video_name = self.config.video_names[click_data.video_index]
         # TODO - NO LIST INDEXING!! We've been burned by this so many times - dicts with video names as keys or something like that would be better
@@ -149,7 +312,10 @@ class DataHandler(BaseModel):
         self, video_index: int, frame_number: int
     ) -> dict[str, ClickData]:
         video_name = self.config.video_names[video_index]
-        video_frame_row = self.dataframe.loc[(video_name, frame_number)]
+        try:
+            video_frame_row = self.dataframe.loc[(video_name, frame_number)]
+        except KeyError:
+            return {}
 
         # TODO: There is some error in the DLC machine labels that sometimes returns duplicate data, this pulls the first occurence for each row
         if len(video_frame_row.shape) > 1:
@@ -194,14 +360,17 @@ class DataHandler(BaseModel):
         return click_data
 
     def get_nonempty_frames(self) -> list[int]:
-        mask = self.dataframe.iloc[:, 2:].notna().any(axis=1)
+        mask = self.dataframe.notna().any(axis=1)
         nonempty_dataframe = self.dataframe[mask]
         nonempty_frames = nonempty_dataframe.index.get_level_values("frame").unique()
         return sorted(nonempty_frames.tolist())
 
     def save_csv(self, output_path: str | Path):
-        self.dataframe.to_csv(output_path)
-        logger.info(f"Saved csv data to {output_path}")
+        # Only rows with at least one click — full grid can be 100k+ NaN rows per video.
+        mask = self.dataframe.notna().any(axis=1)
+        labeled = self.dataframe.loc[mask].reset_index()
+        labeled.to_csv(output_path, index=False)
+        logger.info(f"Saved {len(labeled)} labeled row(s) to {output_path}")
 
     def save_parquet(self, output_path: str | Path):
         # TODO: Add some useful metadata here?
