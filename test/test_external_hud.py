@@ -2,7 +2,12 @@
 
 import numpy as np
 
-from skellyclicker.core.video_handler.image_annotator import ImageAnnotator, ImageAnnotatorConfig
+from skellyclicker.core.video_handler.image_annotator import (
+	ImageAnnotator,
+	ImageAnnotatorConfig,
+	get_colors,
+	get_colors_for_css,
+)
 
 
 def test_external_hud_skips_grid_overlays():
@@ -29,3 +34,11 @@ def test_external_hud_disables_click_status_overlay():
 	)
 	out = annotator.annotate_single_image(img, active_point="nose", click_data={})
 	assert np.array_equal(out, img)
+
+
+def test_get_colors_for_css_swaps_bgr_to_rgb():
+	keys = ["nose", "tail"]
+	bgr = get_colors(keys)
+	css = get_colors_for_css(keys)
+	for name in keys:
+		assert css[name] == (bgr[name][2], bgr[name][1], bgr[name][0])

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { AppSession, client, LabelingState } from "../api/client";
 import { pathDialog } from "../api/pathDialog";
 import { humanLabelsCsvDefaultName } from "../api/labelsCsvName";
@@ -32,6 +32,14 @@ Use Save & Close or Close without Saving.`;
 
 function formatPointList(points: string[]): string {
 	return `[${points.join(", ")}]`;
+}
+
+function pointColorCss(
+	colors: Record<string, [number, number, number]>,
+	name: string,
+): string {
+	const rgb = colors[name];
+	return rgb ? `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` : "rgb(255, 0, 255)";
 }
 
 async function isJpegBlob(blob: Blob): Promise<boolean> {
@@ -438,19 +446,42 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 							Available: {formatPointList(state.available_points)}
 						</p>
 					</div>
-					<div className="labeling-hud-section">
+					<div className="labeling-hud-section labeling-hud-section--legend">
 						<h3 className="labeling-hud-title">Legend</h3>
-						<div className="label-legend">
-							<div className="label-legend-row">
-								<span className="label-legend-marker label-legend-marker--human" />
-								<span>Human label</span>
-							</div>
+						<div className="label-legend-keys">
+							<span className="label-legend-key">
+								<span className="label-legend-marker label-legend-marker--human label-legend-marker--sample" />
+								Human label
+							</span>
 							{state.has_machine_labels && (
-								<div className="label-legend-row">
-									<span className="label-legend-marker label-legend-marker--machine" />
-									<span>Machine label</span>
-								</div>
+								<span className="label-legend-key">
+									<span className="label-legend-marker label-legend-marker--machine label-legend-marker--sample" />
+									Machine label
+								</span>
 							)}
+						</div>
+						<div className="label-legend">
+							{state.tracked_points.map((name) => {
+								const color = pointColorCss(state.point_colors, name);
+								const markerStyle = { "--marker-color": color } as CSSProperties;
+								return (
+									<div className="label-legend-row" key={name}>
+										<span
+											className="label-legend-marker label-legend-marker--human"
+											style={markerStyle}
+										/>
+										{state.has_machine_labels && (
+											<span
+												className="label-legend-marker label-legend-marker--machine"
+												style={markerStyle}
+											/>
+										)}
+										<span className="label-legend-name" style={{ color }}>
+											{name}
+										</span>
+									</div>
+								);
+							})}
 						</div>
 					</div>
 					<div className="labeling-hud-section labeling-hud-section--help">

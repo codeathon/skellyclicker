@@ -105,6 +105,14 @@ def get_colors(keys: list[str]) -> dict[str, tuple[int, ...]]:
     return colors
 
 
+def get_colors_for_css(keys: list[str]) -> dict[str, tuple[int, int, int]]:
+    """RGB tuples for web CSS, matching OpenCV BGR marker colors on screen."""
+    return {
+        name: (int(c[2]), int(c[1]), int(c[0]))
+        for name, c in get_colors(keys).items()
+    }
+
+
 def _comma_array(names: list[str]) -> str:
     """Compact list for on-frame overlay, e.g. [p1, p2, p3]."""
     return "[" + ", ".join(names) + "]"

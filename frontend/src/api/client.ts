@@ -41,6 +41,7 @@ export interface LabelingState {
   frame_count: number;
   active_point: string;
   tracked_points: string[];
+  point_colors: Record<string, [number, number, number]>;
   placed_points: string[];
   available_points: string[];
   labeled_frames: number;

@@ -10,6 +10,7 @@ from skellyclicker import (
 	LABELER_JPEG_QUALITY_COMMITTED,
 	LABELER_JPEG_QUALITY_PREVIEW,
 )
+from skellyclicker.core.video_handler.image_annotator import get_colors_for_css
 from skellyclicker.core.video_handler.video_handler import VideoHandler
 
 
@@ -133,12 +134,18 @@ class LabelingEngine(BaseModel):
 		active = handler.data_handler.active_point
 		labeled = len(handler.data_handler.get_nonempty_frames())
 		placed_points, available_points = self._frame_label_status()
+		tracked = handler.data_handler.config.tracked_point_names
+		point_colors = {
+			name: list(rgb)
+			for name, rgb in get_colors_for_css(tracked).items()
+		}
 		return {
 			"session_id": self.session_id,
 			"frame_number": self.frame_number,
 			"frame_count": handler.frame_count,
 			"active_point": active,
-			"tracked_points": handler.data_handler.config.tracked_point_names,
+			"tracked_points": tracked,
+			"point_colors": point_colors,
 			"placed_points": placed_points,
 			"available_points": available_points,
 			"labeled_frames": labeled,
