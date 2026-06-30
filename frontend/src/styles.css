@@ -402,9 +402,23 @@ button:disabled {
   gap: 0.4rem;
 }
 
-.labeling-nav button,
-.close-labeler {
+.labeling-nav button {
   width: auto;
+  margin-bottom: 0;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.85rem;
+}
+
+.labeling-close-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 5.25rem;
+  flex-shrink: 0;
+}
+
+.labeling-close-actions .labeler-action-btn {
+  width: 100%;
   margin-bottom: 0;
   padding: 0.35rem 0.65rem;
   font-size: 0.85rem;

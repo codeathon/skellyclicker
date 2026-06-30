@@ -20,3 +20,15 @@ export function humanLabelsCsvDefaultName(
 
 	return `${timestamp}_${videoPart}_skellyclicker_labels.csv`;
 }
+
+/** Basename of the human labels CSV in use, or the default name if saving later. */
+export function humanLabelsDisplayName(
+	humanLabelsPath: string | null | undefined,
+	videoPaths: string[] | null | undefined,
+): string {
+	if (humanLabelsPath) {
+		const parts = humanLabelsPath.split(/[/\\]/);
+		return parts[parts.length - 1] || humanLabelsPath;
+	}
+	return humanLabelsCsvDefaultName(videoPaths);
+}

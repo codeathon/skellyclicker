@@ -28,7 +28,7 @@ Drag the frame slider to scrub previews.
 Press 'm' to toggle machine label overlay.
 Press 'h' to hide this help.
 Press Esc to close (prompts to save).
-Use Save & Close or Close without Saving.`;
+Use Save or Close.`;
 
 function formatPointList(points: string[]): string {
 	return `[${points.join(", ")}]`;
@@ -395,26 +395,28 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 						Next →
 					</button>
 				</div>
-				<button
-					type="button"
-					className="save-close-labeler"
-					disabled={isClosing}
-					onClick={() => void closeLabeler(true)}
-				>
-					Save &amp; Close
-				</button>
-				<button
-					type="button"
-					className="close-labeler"
-					disabled={isClosing}
-					onClick={() => {
-						if (window.confirm("Close without saving labels?")) {
-							void closeLabeler(false);
-						}
-					}}
-				>
-					Close without Saving
-				</button>
+				<div className="labeling-close-actions">
+					<button
+						type="button"
+						className="labeler-action-btn"
+						disabled={isClosing}
+						onClick={() => void closeLabeler(true)}
+					>
+						Save
+					</button>
+					<button
+						type="button"
+						className="labeler-action-btn"
+						disabled={isClosing}
+						onClick={() => {
+							if (window.confirm("Close without saving labels?")) {
+								void closeLabeler(false);
+							}
+						}}
+					>
+						Close
+					</button>
+				</div>
 				<span className="hint">
 					a/d or ←/→ frames · scrub slider · m machine overlay · h help · Esc close
 				</span>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppSession, client } from "./api/client";
+import { humanLabelsDisplayName } from "./api/labelsCsvName";
 import { pathDialog } from "./api/pathDialog";
 import { DlcSettings } from "./components/DlcSettings";
 import { JobProgressBar, JobProgressState } from "./components/JobProgressBar";
@@ -29,13 +30,20 @@ function parseBodyparts(raw: string): string[] {
     .filter(Boolean);
 }
 
-/** Shown in header — saved filename or unsaved placeholder. */
+/** Shown in header — saved session filename or unsaved placeholder. */
 function sessionLabel(session: AppSession): string {
   if (session.session_saved_path) {
     const parts = session.session_saved_path.split(/[/\\]/);
     return parts[parts.length - 1] || session.session_saved_path;
   }
   return "Unsaved session";
+}
+
+function headerLabel(session: AppSession, labeling: boolean): string {
+  if (labeling) {
+    return humanLabelsDisplayName(session.human_labels_path, session.videos);
+  }
+  return sessionLabel(session);
 }
 
 export default function App() {
@@ -180,7 +188,7 @@ export default function App() {
     <div className={labeling ? "app app--labeling" : "app"}>
       <header>
         <div className="header-left">
-          <span className="session-label">{sessionLabel(session)}</span>
+          <span className="session-label">{headerLabel(session, labeling)}</span>
           <p className="status">{session.status_message}</p>
         </div>
         <h1>SkellyClicker</h1>
