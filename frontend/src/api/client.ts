@@ -42,15 +42,6 @@ export interface AppSession {
   asset_path_checks: AssetPathCheck[];
 }
 
-export interface LowConfidenceItem {
-  frame_number: number;
-  video_index: number;
-  bodypart: string;
-  likelihood: number;
-  x: number;
-  y: number;
-}
-
 export interface LabelingState {
   session_id: string;
   frame_number: number;
@@ -67,11 +58,6 @@ export interface LabelingState {
   auto_next_point: boolean;
   grid_width: number;
   grid_height: number;
-  review_mode: boolean;
-  likelihood_threshold: number;
-  has_likelihood_data: boolean;
-  low_confidence_items: LowConfidenceItem[];
-  selected_review_index: number | null;
 }
 
 export type JobStatus = "pending" | "running" | "completed" | "failed";
@@ -207,11 +193,6 @@ export const client = {
     api<LabelingState>("/api/labeling/active-point", {
       method: "POST",
       body: JSON.stringify({ point_name }),
-    }),
-  selectReviewItem: (index: number) =>
-    api<LabelingState>("/api/labeling/review/select", {
-      method: "POST",
-      body: JSON.stringify({ index }),
     }),
   loadDlc: (path: string) =>
     api<AppSession>("/api/dlc/load", {

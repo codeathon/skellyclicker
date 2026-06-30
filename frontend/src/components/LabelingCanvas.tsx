@@ -45,6 +45,12 @@ function pointColorCss(
 	return rgb ? `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` : "rgb(255, 0, 255)";
 }
 
+/** Colored crosshair cursor matching the active bodypart in the legend. */
+function crosshairCursorCss(color: string): string {
+	const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><line x1='12' y1='3' x2='12' y2='21' stroke='${color}' stroke-width='2'/><line x1='3' y1='12' x2='21' y2='12' stroke='${color}' stroke-width='2'/></svg>`;
+	return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`;
+}
+
 async function isJpegBlob(blob: Blob): Promise<boolean> {
 	const header = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
 	return header[0] === 0xff && header[1] === 0xd8;
@@ -462,6 +468,10 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 
 	if (!state) return <p>Loading labeler…</p>;
 
+	const activeCursor = crosshairCursorCss(
+		pointColorCss(state.point_colors, state.active_point),
+	);
+
 	return (
 		<div
 			className="labeling"
@@ -510,7 +520,12 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 						</button>
 					</div>
 					<div className="labeling-stage" ref={stageRef}>
-						<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
+						<canvas
+							ref={canvasRef}
+							className="label-canvas"
+							style={{ cursor: activeCursor }}
+							onClick={onClick}
+						/>
 					</div>
 					<div className="labeling-close-actions">
 						<button
