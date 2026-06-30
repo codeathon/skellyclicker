@@ -530,13 +530,13 @@ button:disabled {
 }
 
 .label-legend-marker--sample {
-  --marker-color: #d87328;
+  --marker-color: #8b9cb3;
 }
 
 .label-legend-marker--human {
   transform: rotate(45deg);
-  border: 2px solid #fff;
-  background: var(--marker-color, #d87328);
+  border: 2px solid var(--marker-color, #8b9cb3);
+  background: transparent;
   box-sizing: border-box;
 }
 
@@ -547,19 +547,20 @@ button:disabled {
   position: absolute;
   left: 50%;
   top: 50%;
-  background: var(--marker-color, #d87328);
-  box-shadow: 0 0 0 1px #fff;
+  background: transparent;
 }
 
 .label-legend-marker--machine::before {
   width: 100%;
-  height: 2px;
+  height: 0;
+  border-top: 2px solid var(--marker-color, #8b9cb3);
   transform: translate(-50%, -50%);
 }
 
 .label-legend-marker--machine::after {
-  width: 2px;
+  width: 0;
   height: 100%;
+  border-left: 2px solid var(--marker-color, #8b9cb3);
   transform: translate(-50%, -50%);
 }
 
