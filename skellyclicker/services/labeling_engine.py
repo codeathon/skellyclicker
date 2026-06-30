@@ -6,7 +6,10 @@ from uuid import uuid4
 import cv2
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from skellyclicker import MAX_WINDOW_SIZE
+from skellyclicker import (
+	LABELER_JPEG_QUALITY_COMMITTED,
+	LABELER_JPEG_QUALITY_PREVIEW,
+)
 from skellyclicker.core.video_handler.video_handler import VideoHandler
 
 
@@ -46,9 +49,8 @@ class LabelingEngine(BaseModel):
 			bodyparts = tracked_point_names
 			overlay = machine_labels_path
 
-		handler = VideoHandler.from_videos(
+		handler = VideoHandler.from_videos_for_labeler(
 			video_paths=video_paths,
-			max_window_size=MAX_WINDOW_SIZE,
 			data_handler_path=primary_csv,
 			tracked_point_names=list(tracked_point_names) if tracked_point_names else None,
 			machine_labels_path=overlay,
@@ -94,13 +96,16 @@ class LabelingEngine(BaseModel):
 				image = self.video_handler.create_grid_image(
 					render_at,
 					annotate_images=not preview,
+					preview=preview,
 				)
 			finally:
 				if preview:
 					self.video_handler.show_machine_labels = prev_show
 				self.video_handler.image_annotator.config.show_help = prev_help
 
-			quality = 55 if preview else 85
+			quality = (
+				LABELER_JPEG_QUALITY_PREVIEW if preview else LABELER_JPEG_QUALITY_COMMITTED
+			)
 			ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, quality])
 			if not ok:
 				raise RuntimeError("Failed to encode frame as JPEG")

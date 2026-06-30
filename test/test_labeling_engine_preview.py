@@ -22,4 +22,4 @@ def test_preview_render_does_not_change_committed_frame():
 		engine.render_frame_jpeg(99, preview=True)
 
 	assert engine.frame_number == 12
-	handler.create_grid_image.assert_called_once_with(99, annotate_images=False)
+	handler.create_grid_image.assert_called_once_with(99, annotate_images=False, preview=True)

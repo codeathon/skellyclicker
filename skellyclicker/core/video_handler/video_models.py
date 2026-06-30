@@ -102,47 +102,67 @@ class GridParameters(BaseModel):
         return self.rows, self.columns
 
 
-    @classmethod
-    def calculate(
-        cls, videos: dict[VideoPathString, VideoPlaybackState], max_window_size: Tuple[int, int]
-    ) -> "GridParameters":
-        """Calculate grid parameters based on video sizes and window constraints."""
-        max_width, max_height = max_window_size
-        
+    @staticmethod
+    def _compute_layout(
+        videos: dict[VideoPathString, VideoPlaybackState],
+    ) -> tuple[int, int, float]:
+        """Shared row/column layout from video count and mean aspect ratio."""
         mean_width = sum(video.metadata.width for video in videos.values()) / len(videos)
         mean_height = sum(video.metadata.height for video in videos.values()) / len(videos)
-
         mean_aspect_ratio = mean_width / mean_height
-        
-        # make initial estimate
+
         num_rows = round(math.sqrt(len(videos) * mean_aspect_ratio))
         num_columns = math.ceil(len(videos) / num_rows)
- 
-        # make sure all videos fit
+
         while num_rows * num_columns < len(videos):
             if mean_aspect_ratio > 1:
                 num_rows += 1
             else:
                 num_columns += 1
-                
-        # remove empty space where possible
+
         while num_rows * num_columns > len(videos):
-            if mean_aspect_ratio < 1: # remove rows first for vertical videos
+            if mean_aspect_ratio < 1:
                 if (num_rows - 1) * num_columns >= len(videos):
                     num_rows -= 1
                 elif num_rows * (num_columns - 1) >= len(videos):
                     num_columns -= 1
                 else:
                     break
-            else: # remove columns first for horizontal videos
+            else:
                 if num_rows * (num_columns - 1) >= len(videos):
                     num_columns -= 1
                 elif (num_rows - 1) * num_columns >= len(videos):
                     num_rows -= 1
                 else:
                     break
-    
-        # Calculate cell size
+
+        return num_rows, num_columns, mean_aspect_ratio
+
+    @classmethod
+    def calculate_native(
+        cls, videos: dict[VideoPathString, VideoPlaybackState]
+    ) -> "GridParameters":
+        """Grid sized for native video resolution (largest camera sets cell size)."""
+        num_rows, num_columns, _ = cls._compute_layout(videos)
+        cell_width = max(video.metadata.width for video in videos.values())
+        cell_height = max(video.metadata.height for video in videos.values())
+        return cls(
+            rows=num_rows,
+            columns=num_columns,
+            cell_width=cell_width,
+            cell_height=cell_height,
+            total_width=cell_width * num_columns,
+            total_height=cell_height * num_rows,
+        )
+
+    @classmethod
+    def calculate(
+        cls, videos: dict[VideoPathString, VideoPlaybackState], max_window_size: Tuple[int, int]
+    ) -> "GridParameters":
+        """Calculate grid parameters based on video sizes and window constraints."""
+        max_width, max_height = max_window_size
+        num_rows, num_columns, _ = cls._compute_layout(videos)
+
         cell_width = max_width // num_columns
         cell_height = max_height // num_rows
 
