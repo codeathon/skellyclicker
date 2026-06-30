@@ -56,7 +56,11 @@ class LabelingEngine(BaseModel):
 			tracked_point_names=list(tracked_point_names) if tracked_point_names else None,
 			machine_labels_path=overlay,
 		)
-		engine = cls(video_handler=handler)
+		# Keep active bodypart fixed when editing an imported human labels CSV.
+		engine = cls(
+			video_handler=handler,
+			auto_next_point=not bool(human_labels_path),
+		)
 		annotator_cfg = engine.video_handler.image_annotator.config
 		annotator_cfg.web_help = True
 		annotator_cfg.external_hud = True
