@@ -10,6 +10,12 @@ export type WorkflowState =
   | "analyzing"
   | "review";
 
+export interface AssetPathCheck {
+  kind: string;
+  path: string;
+  exists: boolean;
+}
+
 export interface AppSession {
   session_id: string;
   generation: number;
@@ -33,6 +39,7 @@ export interface AppSession {
   training_batch_size: number;
   filter_predictions: boolean;
   annotate_videos: boolean;
+  asset_path_checks: AssetPathCheck[];
 }
 
 export interface LabelingState {

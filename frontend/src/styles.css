@@ -142,6 +142,47 @@ main.main--labeling > .labeling {
   font-size: 0.8rem;
 }
 
+.asset-row-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.asset-status {
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.asset-status--ok {
+  color: #6eeb83;
+  border: 1px solid #3d9a52;
+  background: #1a2a1a;
+}
+
+.asset-status--missing {
+  color: #ff6b6b;
+  border: 1px solid #c03030;
+  background: #2a1a1a;
+}
+
+.asset-path-warning {
+  margin: 0 0 0.65rem;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.78rem;
+  color: #ffb4b4;
+  background: #2a1a1a;
+  border: 1px solid #6b3030;
+  border-radius: 4px;
+}
+
 .asset-label {
   color: #6b7d94;
 }

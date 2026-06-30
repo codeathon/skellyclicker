@@ -9,6 +9,7 @@ from skellyclicker.services.dlc_job_runner import DLCJobRunner
 from skellyclicker.services.errors import SessionConflictError, SessionError
 from skellyclicker.services.labeling_engine import LabelingEngine
 from skellyclicker.services.models import AppSession, BackgroundJob, WorkflowState
+from skellyclicker.services.session_paths import collect_asset_path_checks
 from skellyclicker.services.workflow import refresh_workflow_state
 
 from skellyclicker.services.dlc_paths import resolve_dlc_project_input
@@ -25,7 +26,12 @@ class SessionStore:
 		self.job_runner = DLCJobRunner(self)
 
 	def get_session(self) -> AppSession:
-		return self.session
+		return self._finalize_session()
+
+	def _finalize_session(self) -> AppSession:
+		"""Attach fresh path checks and derived workflow state before API responses."""
+		self.session.asset_path_checks = collect_asset_path_checks(self.session)
+		return refresh_workflow_state(self.session)
 
 	def _bump_generation(self) -> None:
 		self.session.generation += 1
@@ -51,13 +57,13 @@ class SessionStore:
 		self._assert_no_active_job()
 		self._teardown_all()
 		self.session = AppSession(workflow_state=WorkflowState.needs_videos)
-		return self.session
+		return self._finalize_session()
 
 	def clear_session(self) -> AppSession:
 		self._assert_no_active_job()
 		self._teardown_all()
 		self.session = AppSession()
-		return refresh_workflow_state(self.session)
+		return self._finalize_session()
 
 	def _validate_video_paths(self, paths: list[str]) -> list[str]:
 		if not paths:
@@ -109,7 +115,7 @@ class SessionStore:
 			raise SessionError(f"Video not in session: {path}")
 		existing.remove(resolved)
 		self._apply_videos(existing)
-		return refresh_workflow_state(self.session)
+		return self._finalize_session()
 
 	def set_human_labels_path(self, path: str) -> AppSession:
 		self._assert_no_active_job()
@@ -120,7 +126,7 @@ class SessionStore:
 		df = pd.read_csv(path)
 		self.session.human_labels_path = path
 		self.session.tracked_point_names = bodypart_names_from_csv_columns(list(df.columns))
-		return refresh_workflow_state(self.session)
+		return self._finalize_session()
 
 	def set_machine_labels_path(self, path: str) -> AppSession:
 		self._assert_no_active_job()
@@ -250,7 +256,7 @@ class SessionStore:
 		self.labeling_engine = None
 		self.session.labeling_session_id = None
 		self.session.labeled_frame_count = labeled_count
-		return refresh_workflow_state(self.session)
+		return self._finalize_session()
 
 	def _sync_dlc_iteration_from_handler(self) -> None:
 		if self.dlc_handler is not None:
@@ -274,7 +280,7 @@ class SessionStore:
 		self._sync_dlc_iteration_from_handler()
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
-		return refresh_workflow_state(self.session)
+		return self._finalize_session()
 
 	def _resolve_session_json_path(self, path: str) -> Path:
 		"""Normalize session JSON path; bare filenames go under ~/skellyclicker_sessions/."""
@@ -296,7 +302,9 @@ class SessionStore:
 		target = self._resolve_session_json_path(path)
 		try:
 			target.parent.mkdir(parents=True, exist_ok=True)
-			target.write_text(self.session.model_dump_json(indent=2))
+			target.write_text(
+				self.session.model_dump_json(indent=2, exclude={"asset_path_checks"})
+			)
 		except OSError as exc:
 			raise SessionError(
 				f"Could not write session file: {target.resolve()}. {exc}"
@@ -331,7 +339,13 @@ class SessionStore:
 					project_config_path=str(config_path.resolve())
 				)
 				self._sync_dlc_iteration_from_handler()
-		return refresh_workflow_state(self.session)
+		session = self._finalize_session()
+		missing = [c.path for c in session.asset_path_checks if not c.exists]
+		if missing:
+			session.status_message = (
+				f"Session loaded; {len(missing)} referenced path(s) not found on disk"
+			)
+		return session
 
 
 # Module-level singleton used by FastAPI routes.
