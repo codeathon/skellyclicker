@@ -362,39 +362,13 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 			onMouseDown={() => containerRef.current?.focus()}
 		>
 			<div className="labeling-toolbar">
-				<span>
-					Frame {state.frame_number + 1} / {state.frame_count}
+				<span className="hint labeling-toolbar-hint">
+					a/d or ←/→ frames · scrub slider · m machine overlay · h help · Esc close
 				</span>
-				<span>
-					Active: <strong>{state.active_point}</strong>
-				</span>
-				<span>Labeled: {state.labeled_frames}</span>
-				<div className="labeling-nav">
-					<button
-						type="button"
-						disabled={state.frame_number <= 0 || isClosing}
-						onClick={() =>
-							loadFrame(state.frame_number - 1).catch((e) => {
-								if (isIgnorableFetchError(e)) return;
-								setError(String(e));
-							})
-						}
-					>
-						← Prev
-					</button>
-					<button
-						type="button"
-						disabled={state.frame_number >= state.frame_count - 1 || isClosing}
-						onClick={() =>
-							loadFrame(state.frame_number + 1).catch((e) => {
-								if (isIgnorableFetchError(e)) return;
-								setError(String(e));
-							})
-						}
-					>
-						Next →
-					</button>
-				</div>
+			</div>
+			{error && <div className="error">{error}</div>}
+			{isClosing && <p className="hint">Saving and closing…</p>}
+			<div className="labeling-body">
 				<div className="labeling-close-actions">
 					<button
 						type="button"
@@ -417,15 +391,36 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 						Close
 					</button>
 				</div>
-				<span className="hint">
-					a/d or ←/→ frames · scrub slider · m machine overlay · h help · Esc close
-				</span>
-			</div>
-			{error && <div className="error">{error}</div>}
-			{isClosing && <p className="hint">Saving and closing…</p>}
-			<div className="labeling-body">
-				<div className="labeling-stage" ref={stageRef}>
-					<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
+				<div className="labeling-center">
+					<div className="labeling-nav">
+						<button
+							type="button"
+							disabled={state.frame_number <= 0 || isClosing}
+							onClick={() =>
+								loadFrame(state.frame_number - 1).catch((e) => {
+									if (isIgnorableFetchError(e)) return;
+									setError(String(e));
+								})
+							}
+						>
+							← Prev
+						</button>
+						<button
+							type="button"
+							disabled={state.frame_number >= state.frame_count - 1 || isClosing}
+							onClick={() =>
+								loadFrame(state.frame_number + 1).catch((e) => {
+									if (isIgnorableFetchError(e)) return;
+									setError(String(e));
+								})
+							}
+						>
+							Next →
+						</button>
+					</div>
+					<div className="labeling-stage" ref={stageRef}>
+						<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
+					</div>
 				</div>
 				<aside className="labeling-hud" aria-label="Labeler info">
 					<div className="labeling-hud-section">
@@ -436,6 +431,7 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 						<p className="labeling-hud-line">
 							Active: <strong>{state.active_point}</strong>
 						</p>
+						<p className="labeling-hud-line">Labeled frames: {state.labeled_frames}</p>
 					</div>
 					<div className="labeling-hud-section">
 						<h3 className="labeling-hud-title">Labels on frame</h3>
