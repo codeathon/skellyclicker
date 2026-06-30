@@ -369,29 +369,10 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
 			<div className="labeling-body">
-				<div className="labeling-close-actions">
-					<button
-						type="button"
-						className="labeler-action-btn"
-						disabled={isClosing}
-						onClick={() => void closeLabeler(true)}
-					>
-						Save
-					</button>
-					<button
-						type="button"
-						className="labeler-action-btn"
-						disabled={isClosing}
-						onClick={() => {
-							if (window.confirm("Close without saving labels?")) {
-								void closeLabeler(false);
-							}
-						}}
-					>
-						Close
-					</button>
-				</div>
 				<div className="labeling-center">
+					<p className="labeling-labeled-count">
+						Labeled frames: {state.labeled_frames}
+					</p>
 					<div className="labeling-nav">
 						<button
 							type="button"
@@ -421,6 +402,28 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 					<div className="labeling-stage" ref={stageRef}>
 						<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
 					</div>
+					<div className="labeling-close-actions">
+						<button
+							type="button"
+							className="labeler-action-btn"
+							disabled={isClosing}
+							onClick={() => void closeLabeler(true)}
+						>
+							Save
+						</button>
+						<button
+							type="button"
+							className="labeler-action-btn"
+							disabled={isClosing}
+							onClick={() => {
+								if (window.confirm("Close without saving labels?")) {
+									void closeLabeler(false);
+								}
+							}}
+						>
+							Close
+						</button>
+					</div>
 				</div>
 				<aside className="labeling-hud" aria-label="Labeler info">
 					<div className="labeling-hud-section">
@@ -431,7 +434,6 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 						<p className="labeling-hud-line">
 							Active: <strong>{state.active_point}</strong>
 						</p>
-						<p className="labeling-hud-line">Labeled frames: {state.labeled_frames}</p>
 					</div>
 					<div className="labeling-hud-section">
 						<h3 className="labeling-hud-title">Labels on frame</h3>
