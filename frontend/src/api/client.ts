@@ -41,6 +41,8 @@ export interface LabelingState {
   frame_count: number;
   active_point: string;
   tracked_points: string[];
+  placed_points: string[];
+  available_points: string[];
   labeled_frames: number;
   show_machine_labels: boolean;
   show_help: boolean;

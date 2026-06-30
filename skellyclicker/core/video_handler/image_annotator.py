@@ -223,6 +223,8 @@ class ImageAnnotatorConfig(BaseModel):
 
     show_help: bool = False
     web_help: bool = False
+    # Web labeler draws legend/help/status in HTML; keep only markers on the JPEG.
+    external_hud: bool = False
     show_clicks: bool = True
     show_names: bool = True
     show_legend: bool = True
@@ -236,6 +238,9 @@ class ImageAnnotator(BaseModel):
                             image: np.ndarray,
                             active_point: str,
                             frame_number: int) -> np.ndarray:
+        if self.config.external_hud:
+            return image
+
         if self.config.show_help:
             help_text = WEB_FULL_HELP_TEXT if self.config.web_help else FULL_HELP_TEXT
         else:

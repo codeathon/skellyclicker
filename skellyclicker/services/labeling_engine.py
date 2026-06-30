@@ -56,7 +56,10 @@ class LabelingEngine(BaseModel):
 			machine_labels_path=overlay,
 		)
 		engine = cls(video_handler=handler)
-		engine.video_handler.image_annotator.config.web_help = True
+		annotator_cfg = engine.video_handler.image_annotator.config
+		annotator_cfg.web_help = True
+		annotator_cfg.external_hud = True
+		annotator_cfg.show_clicks = False
 		engine.sync_active_point()
 		return engine
 
@@ -116,16 +119,28 @@ class LabelingEngine(BaseModel):
 			x, y, self.frame_number, auto_next_point=self.auto_next_point
 		)
 
+	def _frame_label_status(self) -> tuple[list[str], list[str]]:
+		"""Bodyparts placed vs still available on the primary video for the current frame."""
+		dh = self.video_handler.data_handler
+		tracked = dh.config.tracked_point_names
+		click_data = dh.get_data_by_video_frame(0, self.frame_number)
+		placed = [name for name in tracked if name in click_data]
+		available = [name for name in tracked if name not in click_data]
+		return placed, available
+
 	def state_dict(self) -> dict:
 		handler = self.video_handler
 		active = handler.data_handler.active_point
 		labeled = len(handler.data_handler.get_nonempty_frames())
+		placed_points, available_points = self._frame_label_status()
 		return {
 			"session_id": self.session_id,
 			"frame_number": self.frame_number,
 			"frame_count": handler.frame_count,
 			"active_point": active,
 			"tracked_points": handler.data_handler.config.tracked_point_names,
+			"placed_points": placed_points,
+			"available_points": available_points,
 			"labeled_frames": labeled,
 			"show_machine_labels": self.show_machine_labels,
 			"show_help": self.show_help,

@@ -21,6 +21,19 @@ function isIgnorableFetchError(err: unknown): boolean {
 	return false;
 }
 
+/** Matches skellyclicker.core.video_handler.image_annotator.WEB_FULL_HELP_TEXT */
+const WEB_FULL_HELP_TEXT = `Click the video to place the active bodypart.
+Use 'a' / 'd' or arrow keys for previous / next frame.
+Drag the frame slider to scrub previews.
+Press 'm' to toggle machine label overlay.
+Press 'h' to hide this help.
+Press Esc to close (prompts to save).
+Use Save & Close or Close without Saving.`;
+
+function formatPointList(points: string[]): string {
+	return `[${points.join(", ")}]`;
+}
+
 async function isJpegBlob(blob: Blob): Promise<boolean> {
 	const header = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
 	return header[0] === 0xff && header[1] === 0xd8;
@@ -277,14 +290,11 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 			}
 			if (key === "h") {
 				e.preventDefault();
-				const gen = ++previewGenRef.current;
 				client
 					.toggleHelp()
-					.then(async (s) => {
-						if (gen !== previewGenRef.current) return;
+					.then((s) => {
 						frameRef.current = s.frame_number;
 						setState(s);
-						await fetchAndPaintFrame(s.frame_number, false, gen);
 					})
 					.catch((err) => {
 						if (isIgnorableFetchError(err)) return;
@@ -403,8 +413,54 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 			</div>
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
-			<div className="labeling-stage" ref={stageRef}>
-				<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
+			<div className="labeling-body">
+				<div className="labeling-stage" ref={stageRef}>
+					<canvas ref={canvasRef} className="label-canvas" onClick={onClick} />
+				</div>
+				<aside className="labeling-hud" aria-label="Labeler info">
+					<div className="labeling-hud-section">
+						<h3 className="labeling-hud-title">Frame</h3>
+						<p className="labeling-hud-line">
+							{state.frame_number + 1} / {state.frame_count}
+						</p>
+						<p className="labeling-hud-line">
+							Active: <strong>{state.active_point}</strong>
+						</p>
+					</div>
+					<div className="labeling-hud-section">
+						<h3 className="labeling-hud-title">Labels on frame</h3>
+						{state.placed_points.length > 0 && (
+							<p className="labeling-hud-line">
+								On frame: {formatPointList(state.placed_points)}
+							</p>
+						)}
+						<p className="labeling-hud-line">
+							Available: {formatPointList(state.available_points)}
+						</p>
+					</div>
+					<div className="labeling-hud-section">
+						<h3 className="labeling-hud-title">Legend</h3>
+						<div className="label-legend">
+							<div className="label-legend-row">
+								<span className="label-legend-marker label-legend-marker--human" />
+								<span>Human label</span>
+							</div>
+							{state.has_machine_labels && (
+								<div className="label-legend-row">
+									<span className="label-legend-marker label-legend-marker--machine" />
+									<span>Machine label</span>
+								</div>
+							)}
+						</div>
+					</div>
+					<div className="labeling-hud-section labeling-hud-section--help">
+						{state.show_help ? (
+							<pre className="labeling-help-full">{WEB_FULL_HELP_TEXT}</pre>
+						) : (
+							<p className="labeling-help-short">Press H for help · Esc to close</p>
+						)}
+					</div>
+				</aside>
 			</div>
 			<div className={`frame-scrubber${scrubbing ? " frame-scrubber--scrubbing" : ""}`}>
 				<label htmlFor="frame-slider">

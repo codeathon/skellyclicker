@@ -431,10 +431,121 @@ button:disabled {
 .labeling-stage {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+}
+
+.labeling-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0.65rem;
+  align-items: stretch;
+}
+
+.labeling-hud {
+  flex: 0 0 13.5rem;
+  min-width: 11rem;
+  max-width: 16rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.82rem;
+  color: #c5d0de;
+  background: #151b24;
+  border: 1px solid #2a3441;
+  border-radius: 4px;
+  overflow-y: auto;
+}
+
+.labeling-hud-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.labeling-hud-section--help {
+  margin-top: auto;
+}
+
+.labeling-hud-title {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8b9cb3;
+}
+
+.labeling-hud-line {
+  margin: 0;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.label-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.label-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.label-legend-marker {
+  flex-shrink: 0;
+  width: 0.85rem;
+  height: 0.85rem;
+  position: relative;
+}
+
+.label-legend-marker--human {
+  transform: rotate(45deg);
+  border: 2px solid #fff;
+  background: #d87328;
+}
+
+.label-legend-marker--machine::before,
+.label-legend-marker--machine::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: 2px;
+  background: #d87328;
+  border: 1px solid #fff;
+  box-sizing: border-box;
+}
+
+.label-legend-marker--machine::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.label-legend-marker--machine::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.labeling-help-short {
+  margin: 0;
+  color: #6b7d94;
+  font-size: 0.78rem;
+}
+
+.labeling-help-full {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #a8b8cc;
 }
 
 .label-canvas {
