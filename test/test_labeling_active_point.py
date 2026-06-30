@@ -162,3 +162,19 @@ def test_undo_last_label_restores_previous_coords():
 	assert engine.undo_last_label() is True
 	x, y = data_handler.get_point_coords(0, 1, "nose")
 	assert (x, y) == (12.0, 13.0)
+
+
+def test_toggle_show_names_updates_annotators():
+	from unittest.mock import MagicMock
+
+	handler = MagicMock()
+	handler.image_annotator.config = MagicMock(show_names=True, show_help=False)
+	handler.machine_labels_annotator = MagicMock()
+	handler.machine_labels_annotator.config = MagicMock(show_names=True)
+
+	engine = LabelingEngine(video_handler=handler, show_names=True)
+	engine.toggle_show_names()
+
+	assert engine.show_names is False
+	assert handler.image_annotator.config.show_names is False
+	assert handler.machine_labels_annotator.config.show_names is False

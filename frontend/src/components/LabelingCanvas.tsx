@@ -27,6 +27,7 @@ const WEB_FULL_HELP_TEXT = `Click the video to place the active bodypart.
 Use 'a' / 'd' or arrow keys for previous / next frame.
 Drag the frame slider to scrub previews.
 Press 'm' to toggle machine label overlay.
+Press 'n' to toggle bodypart names on the video.
 Press 'h' to hide this help.
 Press Esc to close (prompts to save).
 Use Save to write labels; Close to exit.
@@ -460,6 +461,23 @@ export function LabelingCanvas({
 					});
 				return;
 			}
+			if (key === "n") {
+				e.preventDefault();
+				const gen = ++previewGenRef.current;
+				client
+					.toggleLabelNames()
+					.then(async (s) => {
+						if (gen !== previewGenRef.current) return;
+						frameRef.current = s.frame_number;
+						setState(s);
+						await fetchAndPaintFrame(s.frame_number, false, gen);
+					})
+					.catch((err) => {
+						if (isIgnorableFetchError(err)) return;
+						setError(String(err));
+					});
+				return;
+			}
 			if (key === "h") {
 				e.preventDefault();
 				client
@@ -550,7 +568,7 @@ export function LabelingCanvas({
 		>
 			<div className="labeling-toolbar">
 				<span className="hint labeling-toolbar-hint">
-					a/d or ←/→ frames · Space play/pause · u / Ctrl+Z undo · scrub slider · m machine overlay · h help · Esc close
+					a/d or ←/→ frames · Space play/pause · u / Ctrl+Z undo · n label names · scrub slider · m machine overlay · h help · Esc close
 				</span>
 			</div>
 			{error && <div className="error">{error}</div>}

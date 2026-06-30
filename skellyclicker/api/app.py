@@ -373,7 +373,16 @@ def toggle_help_overlay():
 		raise HTTPException(status_code=400, detail="Labeler is not open")
 	eng = store.labeling_engine
 	eng.show_help = not eng.show_help
+	eng._sync_annotator_overlay_flags()
 	return eng.state_dict()
+
+
+@app.post("/api/labeling/toggle-names")
+def toggle_label_names():
+	if not store.labeling_engine:
+		raise HTTPException(status_code=400, detail="Labeler is not open")
+	store.labeling_engine.toggle_show_names()
+	return store.labeling_engine.state_dict()
 
 
 @app.post("/api/labeling/active-point")

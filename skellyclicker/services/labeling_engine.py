@@ -25,6 +25,7 @@ class LabelingEngine(BaseModel):
 	auto_next_point: bool = True
 	show_machine_labels: bool = False
 	show_help: bool = False
+	show_names: bool = True
 	# OpenCV VideoCapture is not thread-safe; scrub previews hit this concurrently.
 	_render_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 	_undo_stack: list[dict[str, Any]] = PrivateAttr(default_factory=list)
@@ -68,6 +69,7 @@ class LabelingEngine(BaseModel):
 		annotator_cfg.external_hud = True
 		annotator_cfg.show_clicks = False
 		engine.sync_active_point()
+		engine._sync_annotator_overlay_flags()
 		return engine
 
 	def sync_active_point(self) -> None:
@@ -82,6 +84,18 @@ class LabelingEngine(BaseModel):
 
 	def set_active_point(self, point_name: str) -> None:
 		self.video_handler.data_handler.set_active_point_by_name(point_name)
+
+	def _sync_annotator_overlay_flags(self) -> None:
+		"""Apply web labeler overlay toggles to human and machine annotators."""
+		self.video_handler.image_annotator.config.show_help = self.show_help
+		self.video_handler.image_annotator.config.show_names = self.show_names
+		machine_annotator = self.video_handler.machine_labels_annotator
+		if machine_annotator is not None:
+			machine_annotator.config.show_names = self.show_names
+
+	def toggle_show_names(self) -> None:
+		self.show_names = not self.show_names
+		self._sync_annotator_overlay_flags()
 
 	def render_frame_jpeg(
 		self,
@@ -98,6 +112,7 @@ class LabelingEngine(BaseModel):
 
 			prev_show = self.video_handler.show_machine_labels
 			prev_help = self.video_handler.image_annotator.config.show_help
+			prev_names = self.video_handler.image_annotator.config.show_names
 			try:
 				if preview:
 					# Scrub preview: show machine predictions when available, skip human overlays.
@@ -108,7 +123,7 @@ class LabelingEngine(BaseModel):
 						self.video_handler.ensure_machine_labels_loaded()
 				else:
 					self.video_handler.show_machine_labels = self.show_machine_labels
-				self.video_handler.image_annotator.config.show_help = self.show_help
+				self._sync_annotator_overlay_flags()
 				image = self.video_handler.create_grid_image(
 					render_at,
 					annotate_images=not preview,
@@ -118,6 +133,9 @@ class LabelingEngine(BaseModel):
 				if preview:
 					self.video_handler.show_machine_labels = prev_show
 				self.video_handler.image_annotator.config.show_help = prev_help
+				self.video_handler.image_annotator.config.show_names = prev_names
+				if self.video_handler.machine_labels_annotator is not None:
+					self.video_handler.machine_labels_annotator.config.show_names = prev_names
 
 			quality = (
 				LABELER_JPEG_QUALITY_PREVIEW if preview else LABELER_JPEG_QUALITY_COMMITTED
@@ -224,6 +242,7 @@ class LabelingEngine(BaseModel):
 			"labeled_frames": labeled,
 			"show_machine_labels": self.show_machine_labels,
 			"show_help": self.show_help,
+			"show_names": self.show_names,
 			"has_machine_labels": bool(handler.machine_labels_path),
 			"auto_next_point": self.auto_next_point,
 			"grid_width": handler.grid_parameters.total_width,

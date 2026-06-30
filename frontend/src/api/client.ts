@@ -54,6 +54,7 @@ export interface LabelingState {
   labeled_frames: number;
   show_machine_labels: boolean;
   show_help: boolean;
+  show_names: boolean;
   has_machine_labels: boolean;
   auto_next_point: boolean;
   grid_width: number;
@@ -194,6 +195,8 @@ export const client = {
     api<LabelingState>("/api/labeling/toggle-machine-overlay", { method: "POST" }),
   toggleHelp: () =>
     api<LabelingState>("/api/labeling/toggle-help", { method: "POST" }),
+  toggleLabelNames: () =>
+    api<LabelingState>("/api/labeling/toggle-names", { method: "POST" }),
   setActivePoint: (point_name: string) =>
     api<LabelingState>("/api/labeling/active-point", {
       method: "POST",
