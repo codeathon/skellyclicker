@@ -31,9 +31,17 @@ def test_dlc_csv_to_skellyclicker_columns(tmp_path: Path):
 	_write_sample_dlc_csv(csv_path, bodyparts)
 
 	df = dlc_analysis_csv_to_skellyclicker(csv_path, video_name="cam0.mp4")
-	assert list(df.columns) == ["nose_x", "nose_y", "tail_base_x", "tail_base_y"]
+	assert list(df.columns) == [
+		"nose_x",
+		"nose_y",
+		"nose_likelihood",
+		"tail_base_x",
+		"tail_base_y",
+		"tail_base_likelihood",
+	]
 	assert df.index.names == ["video", "frame"]
 	assert df.loc[("cam0.mp4", 0), "nose_x"] == 100
+	assert df.loc[("cam0.mp4", 0), "nose_likelihood"] == 0.9
 
 
 def test_iter_dlc_video_csvs_excludes_skellyclicker_output(tmp_path: Path):

@@ -359,6 +359,11 @@ class VideoHandler(BaseModel):
                 except (ValueError, KeyError) as e:
                     logger.error(f"Error updating data with point name {name}: {e}")
 
+    def seed_frame_from_machine_labels(self, frame_number: int) -> None:
+        """Copy all machine predictions on this frame into editable human labels."""
+        for video_index in range(len(self.videos)):
+            self.copy_frame_data_from_machine_labels(frame_number, video_index)
+
     def create_grid_image(
         self,
         frame_number: int,

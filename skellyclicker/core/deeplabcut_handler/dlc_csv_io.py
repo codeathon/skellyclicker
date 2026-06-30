@@ -31,7 +31,7 @@ def dlc_analysis_csv_to_skellyclicker(
 	for col in range(1, raw.shape[1]):
 		bodypart = str(raw.iloc[bp_row, col]).strip()
 		coord = str(raw.iloc[coord_row, col]).strip().lower()
-		if coord not in ("x", "y"):
+		if coord not in ("x", "y", "likelihood"):
 			continue
 		rows[f"{bodypart}_{coord}"] = pd.to_numeric(data.iloc[:, col], errors="coerce")
 

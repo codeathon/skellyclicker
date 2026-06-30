@@ -1,6 +1,7 @@
 """Headless labeling session — wraps VideoHandler without OpenCV windows."""
 
 import threading
+from typing import Any
 from uuid import uuid4
 
 import cv2
@@ -12,6 +13,10 @@ from skellyclicker import (
 )
 from skellyclicker.core.video_handler.image_annotator import get_colors_for_css
 from skellyclicker.core.video_handler.video_handler import VideoHandler
+from skellyclicker.services.low_confidence import (
+	DEFAULT_LIKELIHOOD_THRESHOLD,
+	find_low_confidence_items,
+)
 
 
 class LabelingEngine(BaseModel):
@@ -24,6 +29,10 @@ class LabelingEngine(BaseModel):
 	auto_next_point: bool = True
 	show_machine_labels: bool = False
 	show_help: bool = False
+	review_mode: bool = False
+	likelihood_threshold: float = DEFAULT_LIKELIHOOD_THRESHOLD
+	low_confidence_items: list[dict[str, Any]] = Field(default_factory=list)
+	selected_review_index: int | None = None
 	# OpenCV VideoCapture is not thread-safe; scrub previews hit this concurrently.
 	_render_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
@@ -56,19 +65,54 @@ class LabelingEngine(BaseModel):
 			tracked_point_names=list(tracked_point_names) if tracked_point_names else None,
 			machine_labels_path=overlay,
 		)
-		engine = cls(video_handler=handler)
+		review_mode = bool(
+			human_labels_path and machine_labels_path and not train_on_machine_labels
+		)
+		engine = cls(video_handler=handler, review_mode=review_mode)
 		annotator_cfg = engine.video_handler.image_annotator.config
 		annotator_cfg.web_help = True
 		annotator_cfg.external_hud = True
 		annotator_cfg.show_clicks = False
+		if review_mode:
+			engine.show_machine_labels = True
+			engine._build_review_queue()
 		engine.sync_active_point()
 		return engine
+
+	def _build_review_queue(self) -> None:
+		"""Load machine CSV and build low-confidence review list."""
+		self.video_handler.ensure_machine_labels_loaded()
+		handler = self.video_handler.machine_labels_handler
+		if handler is None:
+			self.low_confidence_items = []
+			return
+		self.low_confidence_items = find_low_confidence_items(
+			handler,
+			threshold=self.likelihood_threshold,
+		)
 
 	def sync_active_point(self) -> None:
 		"""Align active bodypart with the current frame before labeling."""
 		self.video_handler.data_handler.reset_active_point_for_frame(
 			self.frame_number,
 		)
+
+	def set_active_point(self, point_name: str) -> None:
+		self.video_handler.data_handler.set_active_point_by_name(point_name)
+
+	def seed_frame_from_machine(self, frame_number: int | None = None) -> None:
+		"""Copy machine predictions on this frame into editable human labels."""
+		at = self.frame_number if frame_number is None else frame_number
+		self.video_handler.seed_frame_from_machine_labels(at)
+
+	def select_review_item(self, index: int) -> None:
+		if index < 0 or index >= len(self.low_confidence_items):
+			raise IndexError(f"Review index out of range: {index}")
+		item = self.low_confidence_items[index]
+		self.frame_number = int(item["frame_number"])
+		self.seed_frame_from_machine(self.frame_number)
+		self.set_active_point(str(item["bodypart"]))
+		self.selected_review_index = index
 
 	def render_frame_jpeg(
 		self,
@@ -139,6 +183,13 @@ class LabelingEngine(BaseModel):
 			name: list(rgb)
 			for name, rgb in get_colors_for_css(tracked).items()
 		}
+		has_likelihood = bool(
+			handler.machine_labels_handler is not None
+			and any(
+				c.endswith("_likelihood")
+				for c in handler.machine_labels_handler.dataframe.columns
+			)
+		)
 		return {
 			"session_id": self.session_id,
 			"frame_number": self.frame_number,
@@ -155,6 +206,11 @@ class LabelingEngine(BaseModel):
 			"auto_next_point": self.auto_next_point,
 			"grid_width": handler.grid_parameters.total_width,
 			"grid_height": handler.grid_parameters.total_height,
+			"review_mode": self.review_mode,
+			"likelihood_threshold": self.likelihood_threshold,
+			"has_likelihood_data": has_likelihood,
+			"low_confidence_items": self.low_confidence_items,
+			"selected_review_index": self.selected_review_index,
 		}
 
 	def close(self, save: bool, save_path: str | None = None) -> str | None:

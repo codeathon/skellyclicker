@@ -77,6 +77,14 @@ class FrameBody(BaseModel):
 	frame_number: int
 
 
+class ActivePointBody(BaseModel):
+	point_name: str
+
+
+class ReviewSelectBody(BaseModel):
+	index: int
+
+
 class AnalyzeBody(BaseModel):
 	video_paths: list[str]
 	use_training_videos: bool = True
@@ -361,6 +369,31 @@ def toggle_help_overlay():
 		raise HTTPException(status_code=400, detail="Labeler is not open")
 	eng = store.labeling_engine
 	eng.show_help = not eng.show_help
+	return eng.state_dict()
+
+
+@app.post("/api/labeling/active-point")
+def set_active_point(body: ActivePointBody):
+	if not store.labeling_engine:
+		raise HTTPException(status_code=400, detail="Labeler is not open")
+	try:
+		store.labeling_engine.set_active_point(body.point_name)
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	return store.labeling_engine.state_dict()
+
+
+@app.post("/api/labeling/review/select")
+def select_review_item(body: ReviewSelectBody):
+	if not store.labeling_engine:
+		raise HTTPException(status_code=400, detail="Labeler is not open")
+	eng = store.labeling_engine
+	if not eng.review_mode:
+		raise HTTPException(status_code=400, detail="Review mode is not active")
+	try:
+		eng.select_review_item(body.index)
+	except IndexError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	return eng.state_dict()
 
 

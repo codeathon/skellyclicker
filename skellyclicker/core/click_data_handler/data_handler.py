@@ -209,6 +209,7 @@ class DataHandler(BaseModel):
         for point_name in names:
             wanted_cols.append(f"{point_name}_x")
             wanted_cols.append(f"{point_name}_y")
+            wanted_cols.append(f"{point_name}_likelihood")
         overlay_cols = [c for c in wanted_cols if c in sparse.columns]
         dataframe = sparse[overlay_cols] if overlay_cols else sparse.iloc[:, 0:0]
 

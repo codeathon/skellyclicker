@@ -28,7 +28,10 @@ Drag the frame slider to scrub previews.
 Press 'm' to toggle machine label overlay.
 Press 'h' to hide this help.
 Press Esc to close (prompts to save).
-Use Save or Close.`;
+Use Save or Close.
+Press Space to play or pause frames.`;
+
+const PLAY_INTERVAL_MS = 66;
 
 function formatPointList(points: string[]): string {
 	return `[${points.join(", ")}]`;
@@ -64,6 +67,10 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 	// Prevent Esc / double-click from starting a second close while the save dialog is open.
 	const closingRef = useRef(false);
 	const [scrubbing, setScrubbing] = useState(false);
+	const playingRef = useRef(false);
+	const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const frameCountRef = useRef(0);
+	const [playing, setPlaying] = useState(false);
 
 	const fitCanvasToStage = useCallback(() => {
 		const stage = stageRef.current;
@@ -133,6 +140,74 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 		},
 		[fetchAndPaintFrame],
 	);
+
+	const stopPlaying = useCallback(
+		(commit = true) => {
+			if (playTimerRef.current != null) {
+				clearInterval(playTimerRef.current);
+				playTimerRef.current = null;
+			}
+			if (!playingRef.current) return;
+			playingRef.current = false;
+			setPlaying(false);
+			if (commit) {
+				void loadFrame(frameRef.current).catch((err) => {
+					if (isIgnorableFetchError(err)) return;
+					setError(String(err));
+				});
+			}
+		},
+		[loadFrame],
+	);
+
+	const togglePlaying = useCallback(() => {
+		if (!state || closingRef.current || isClosing) return;
+		if (playingRef.current) {
+			stopPlaying(true);
+			return;
+		}
+		if (scrubbingRef.current) return;
+		if (frameRef.current >= state.frame_count - 1) {
+			void loadFrame(0).then(() => {
+				if (closingRef.current) return;
+				playingRef.current = true;
+				setPlaying(true);
+				playTimerRef.current = setInterval(() => {
+					const next = frameRef.current + 1;
+					if (next >= frameCountRef.current) {
+						stopPlaying(true);
+						return;
+					}
+					frameRef.current = next;
+					setSliderFrame(next);
+					const gen = ++previewGenRef.current;
+					void fetchAndPaintFrame(next, true, gen).catch((err) => {
+						if (isIgnorableFetchError(err)) return;
+						stopPlaying(false);
+						setError(String(err));
+					});
+				}, PLAY_INTERVAL_MS);
+			});
+			return;
+		}
+		playingRef.current = true;
+		setPlaying(true);
+		playTimerRef.current = setInterval(() => {
+			const next = frameRef.current + 1;
+			if (next >= frameCountRef.current) {
+				stopPlaying(true);
+				return;
+			}
+			frameRef.current = next;
+			setSliderFrame(next);
+			const gen = ++previewGenRef.current;
+			void fetchAndPaintFrame(next, true, gen).catch((err) => {
+				if (isIgnorableFetchError(err)) return;
+				stopPlaying(false);
+				setError(String(err));
+			});
+		}, PLAY_INTERVAL_MS);
+	}, [state, isClosing, stopPlaying, loadFrame, fetchAndPaintFrame]);
 
 	const drainPreviewQueue = useCallback(async () => {
 		if (previewBusyRef.current) return;
@@ -206,8 +281,14 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 			previewGenRef.current += 1;
 			pendingPreviewFrameRef.current = null;
 			if (scrubRafRef.current != null) cancelAnimationFrame(scrubRafRef.current);
+			if (playTimerRef.current != null) clearInterval(playTimerRef.current);
+			playingRef.current = false;
 		};
 	}, [refresh]);
+
+	useEffect(() => {
+		frameCountRef.current = state?.frame_count ?? 0;
+	}, [state?.frame_count]);
 
 	useEffect(() => {
 		containerRef.current?.focus();
@@ -227,6 +308,7 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 			closingRef.current = true;
 			setIsClosing(true);
 			setError(null);
+			stopPlaying(false);
 			try {
 				let savePath: string | undefined;
 				if (save) {
@@ -247,7 +329,7 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 				setError(e instanceof Error ? e.message : String(e));
 			}
 		},
-		[humanLabelsPath, videoPaths, onClose],
+		[humanLabelsPath, videoPaths, onClose, stopPlaying],
 	);
 
 	useEffect(() => {
@@ -261,8 +343,14 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 				void closeLabeler(save);
 				return;
 			}
+			if (key === " ") {
+				e.preventDefault();
+				togglePlaying();
+				return;
+			}
 			if (key === "a" || key === "arrowleft") {
 				e.preventDefault();
+				stopPlaying(false);
 				const n = Math.max(0, frameRef.current - 1);
 				loadFrame(n).catch((err) => {
 					if (isIgnorableFetchError(err)) return;
@@ -272,6 +360,7 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 			}
 			if (key === "d" || key === "arrowright") {
 				e.preventDefault();
+				stopPlaying(false);
 				const n = Math.min(state.frame_count - 1, frameRef.current + 1);
 				loadFrame(n).catch((err) => {
 					if (isIgnorableFetchError(err)) return;
@@ -312,11 +401,47 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [state, closeLabeler, loadFrame, fetchAndPaintFrame]);
+	}, [state, closeLabeler, loadFrame, fetchAndPaintFrame, stopPlaying, togglePlaying]);
+
+	const selectReviewItem = useCallback(
+		async (index: number) => {
+			stopPlaying(false);
+			const gen = ++previewGenRef.current;
+			try {
+				const s = await client.selectReviewItem(index);
+				if (gen !== previewGenRef.current) return;
+				frameRef.current = s.frame_number;
+				setSliderFrame(s.frame_number);
+				setState(s);
+				await fetchAndPaintFrame(s.frame_number, false, gen);
+			} catch (err) {
+				if (isIgnorableFetchError(err)) return;
+				setError(err instanceof Error ? err.message : String(err));
+			}
+		},
+		[fetchAndPaintFrame, stopPlaying],
+	);
+
+	const onActivePoint = useCallback(
+		(pointName: string) => {
+			client
+				.setActivePoint(pointName)
+				.then((s) => {
+					frameRef.current = s.frame_number;
+					setState(s);
+				})
+				.catch((err) => {
+					if (isIgnorableFetchError(err)) return;
+					setError(String(err));
+				});
+		},
+		[],
+	);
 
 	const onClick = async (e: React.MouseEvent<HTMLCanvasElement>) => {
 		const canvas = canvasRef.current;
 		if (!canvas || !state || closingRef.current) return;
+		stopPlaying(false);
 		const rect = canvas.getBoundingClientRect();
 		const scaleX = canvas.width / rect.width;
 		const scaleY = canvas.height / rect.height;
@@ -336,6 +461,7 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 	};
 
 	const onScrubStart = () => {
+		stopPlaying(false);
 		scrubbingRef.current = true;
 		setScrubbing(true);
 		setError(null);
@@ -349,6 +475,7 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 	};
 
 	const onSliderCommit = (frameNumber: number) => {
+		stopPlaying(false);
 		commitScrub(frameNumber);
 	};
 
@@ -363,12 +490,46 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 		>
 			<div className="labeling-toolbar">
 				<span className="hint labeling-toolbar-hint">
-					a/d or ←/→ frames · scrub slider · m machine overlay · h help · Esc close
+					a/d or ←/→ frames · Space play/pause · scrub slider · m machine overlay · h help · Esc close
 				</span>
 			</div>
 			{error && <div className="error">{error}</div>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
 			<div className="labeling-body">
+				{state.review_mode && (
+					<aside className="labeling-review-queue" aria-label="Low confidence review">
+						<h3 className="labeling-hud-title">
+							Low confidence (&lt; {state.likelihood_threshold})
+						</h3>
+						{!state.has_likelihood_data && (
+							<p className="labeling-review-empty">
+								Re-run Analyze to include likelihood scores in machine labels.
+							</p>
+						)}
+						{state.has_likelihood_data && state.low_confidence_items.length === 0 && (
+							<p className="labeling-review-empty">No predictions below threshold.</p>
+						)}
+						<ul className="labeling-review-list">
+							{state.low_confidence_items.map((item, index) => (
+								<li key={`${item.frame_number}-${item.bodypart}-${index}`}>
+									<button
+										type="button"
+										className={`labeling-review-item${
+											state.selected_review_index === index
+												? " labeling-review-item--selected"
+												: ""
+										}`}
+										disabled={isClosing}
+										onClick={() => void selectReviewItem(index)}
+									>
+										Frame {item.frame_number + 1} · {item.bodypart} ·{" "}
+										{item.likelihood.toFixed(2)}
+									</button>
+								</li>
+							))}
+						</ul>
+					</aside>
+				)}
 				<div className="labeling-center">
 					<p className="labeling-labeled-count">
 						Labeled frames: {state.labeled_frames}
@@ -377,24 +538,26 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 						<button
 							type="button"
 							disabled={state.frame_number <= 0 || isClosing}
-							onClick={() =>
+							onClick={() => {
+								stopPlaying(false);
 								loadFrame(state.frame_number - 1).catch((e) => {
 									if (isIgnorableFetchError(e)) return;
 									setError(String(e));
-								})
-							}
+								});
+							}}
 						>
 							← Prev
 						</button>
 						<button
 							type="button"
 							disabled={state.frame_number >= state.frame_count - 1 || isClosing}
-							onClick={() =>
+							onClick={() => {
+								stopPlaying(false);
 								loadFrame(state.frame_number + 1).catch((e) => {
 									if (isIgnorableFetchError(e)) return;
 									setError(String(e));
-								})
-							}
+								});
+							}}
 						>
 							Next →
 						</button>
@@ -476,9 +639,19 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 												style={markerStyle}
 											/>
 										)}
-										<span className="label-legend-name" style={{ color }}>
+										<button
+											type="button"
+											className={`label-legend-name label-legend-name-btn${
+												state.active_point === name
+													? " label-legend-name-btn--active"
+													: ""
+											}`}
+											style={{ color }}
+											disabled={isClosing}
+											onClick={() => onActivePoint(name)}
+										>
 											{name}
-										</span>
+										</button>
 									</div>
 								);
 							})}
@@ -493,14 +666,28 @@ export function LabelingCanvas({ humanLabelsPath, videoPaths, onClose }: Props) 
 					</div>
 				</aside>
 			</div>
-			<div className={`frame-scrubber${scrubbing ? " frame-scrubber--scrubbing" : ""}`}>
-				<label htmlFor="frame-slider">
-					Frame {sliderFrame + 1} / {state.frame_count}
-				</label>
-				{scrubbing && state.has_machine_labels && (
+			<div className={`frame-scrubber${scrubbing ? " frame-scrubber--scrubbing" : ""}${playing ? " frame-scrubber--playing" : ""}`}>
+				<div className="frame-scrubber-controls">
+					<button
+						type="button"
+						className="frame-play-btn"
+						disabled={isClosing || state.frame_count <= 1}
+						onClick={() => togglePlaying()}
+						title={playing ? "Pause (Space)" : "Play (Space)"}
+					>
+						{playing ? "Pause" : "Play"}
+					</button>
+					<label htmlFor="frame-slider">
+						Frame {sliderFrame + 1} / {state.frame_count}
+					</label>
+				</div>
+				{playing && (
+					<p className="hint scrub-hint">Playing preview frames — pause to edit labels</p>
+				)}
+				{scrubbing && !playing && state.has_machine_labels && (
 					<p className="hint scrub-hint">Machine predictions shown while scrubbing</p>
 				)}
-				{scrubbing && !state.has_machine_labels && (
+				{scrubbing && !playing && !state.has_machine_labels && (
 					<p className="hint scrub-hint">Release slider to load full frame</p>
 				)}
 				<input
