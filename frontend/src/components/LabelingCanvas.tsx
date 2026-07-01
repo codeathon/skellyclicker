@@ -48,129 +48,46 @@ function pointColorCss(
 	return rgb ? `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` : "rgb(255, 0, 255)";
 }
 
-const CURSOR_SIZE = 32;
 const CURSOR_HOTSPOT = 16;
-const cursorDataUrlCache = new Map<string, string>();
-const LABELER_CURSOR_STYLE_ID = "labeler-human-cursor-style";
-const LABELER_CURSOR_CLASS = "label-canvas-hit--human-cursor";
+const preloadedCursorImages = new Set<string>();
 
-function rgbTupleToHex(rgb: [number, number, number]): string {
-	return `#${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
-}
-
-function drawHumanLabelDiamond(
-	ctx: CanvasRenderingContext2D,
-	center: number,
-	radius: number,
-	stroke: string,
-	lineWidth: number,
-): void {
-	ctx.beginPath();
-	ctx.moveTo(center, center - radius);
-	ctx.lineTo(center + radius, center);
-	ctx.lineTo(center, center + radius);
-	ctx.lineTo(center - radius, center);
-	ctx.closePath();
-	ctx.strokeStyle = stroke;
-	ctx.lineWidth = lineWidth;
-	ctx.stroke();
-}
-
-/** Rasterize the hollow diamond used for human labels in the legend. */
-function renderHumanLabelCursorDataUrl(rgb: [number, number, number]): string | null {
-	const canvas = document.createElement("canvas");
-	canvas.width = CURSOR_SIZE;
-	canvas.height = CURSOR_SIZE;
-	const ctx = canvas.getContext("2d");
-	if (!ctx) return null;
-
-	const center = CURSOR_HOTSPOT;
-	const radius = 10;
-	// White halo matches on-frame human markers for contrast on dark video.
-	drawHumanLabelDiamond(ctx, center, radius, "#ffffff", 3);
-	drawHumanLabelDiamond(ctx, center, radius, rgbTupleToHex(rgb), 2);
-	// GTK/Firefox on Linux reject cursors when the hotspot pixel is fully transparent.
-	ctx.fillStyle = rgbTupleToHex(rgb);
-	ctx.fillRect(center, center, 1, 1);
-
-	return canvas.toDataURL("image/png");
-}
-
-function humanLabelCursorValue(dataUrl: string): string {
-	// Firefox requires a keyword fallback; data URIs work, blob: URLs do not on Linux.
-	return `url("${dataUrl}") ${CURSOR_HOTSPOT} ${CURSOR_HOTSPOT}, auto`;
-}
-
-function humanLabelCursorDataUrl(
+function activePointRgb(
 	colors: Record<string, [number, number, number]>,
 	activePoint: string,
-): string | null {
-	const rgb = (colors[activePoint] ?? [255, 0, 255]) as [number, number, number];
-	const key = rgb.join(",");
-	const cached = cursorDataUrlCache.get(key);
-	if (cached) return cached;
-
-	const dataUrl = renderHumanLabelCursorDataUrl(rgb);
-	if (!dataUrl) return null;
-	cursorDataUrlCache.set(key, dataUrl);
-	return dataUrl;
+): [number, number, number] {
+	return (colors[activePoint] ?? [255, 0, 255]) as [number, number, number];
 }
 
-function injectHumanLabelCursorStyle(dataUrl: string): void {
-	let style = document.getElementById(
-		LABELER_CURSOR_STYLE_ID,
-	) as HTMLStyleElement | null;
-	if (!style) {
-		style = document.createElement("style");
-		style.id = LABELER_CURSOR_STYLE_ID;
-		document.head.appendChild(style);
+function humanLabelCursorImageUrl(rgb: [number, number, number]): string {
+	const [r, g, b] = rgb;
+	return `/api/labeling/cursor?r=${r}&g=${g}&b=${b}`;
+}
+
+function humanLabelCursorCss(imageUrl: string): string {
+	// Same-origin PNG URL — Firefox on Ubuntu rejects blob/data-URI cursors.
+	return `url("${imageUrl}") ${CURSOR_HOTSPOT} ${CURSOR_HOTSPOT}, auto`;
+}
+
+function preloadCursorImage(imageUrl: string): Promise<void> {
+	if (preloadedCursorImages.has(imageUrl)) return Promise.resolve();
+	return new Promise((resolve) => {
+		const img = new Image();
+		img.onload = () => {
+			preloadedCursorImages.add(imageUrl);
+			resolve();
+		};
+		img.onerror = () => resolve();
+		img.src = imageUrl;
+	});
+}
+
+function applyCursorToTargets(
+	targets: Array<HTMLElement | null | undefined>,
+	cursorCss: string,
+): void {
+	for (const el of targets) {
+		if (el) el.style.setProperty("cursor", cursorCss, "important");
 	}
-	const cursor = humanLabelCursorValue(dataUrl);
-	style.textContent = `
-.${LABELER_CURSOR_CLASS},
-.${LABELER_CURSOR_CLASS} .label-canvas {
-  cursor: ${cursor} !important;
-}`;
-}
-
-function removeHumanLabelCursorStyle(): void {
-	document.getElementById(LABELER_CURSOR_STYLE_ID)?.remove();
-}
-
-/** Firefox ignores cursor images until the PNG finishes decoding. */
-function applyHumanLabelCursor(
-	hit: HTMLElement,
-	dataUrl: string,
-): () => void {
-	let cancelled = false;
-	const cursor = humanLabelCursorValue(dataUrl);
-
-	const apply = () => {
-		if (cancelled) return;
-		injectHumanLabelCursorStyle(dataUrl);
-		hit.classList.add(LABELER_CURSOR_CLASS);
-		hit.style.cursor = cursor;
-		const canvas = hit.querySelector("canvas");
-		if (canvas instanceof HTMLCanvasElement) {
-			canvas.style.cursor = cursor;
-		}
-	};
-
-	const img = new Image();
-	img.onload = apply;
-	img.onerror = apply;
-	img.src = dataUrl;
-	apply();
-
-	return () => {
-		cancelled = true;
-		hit.classList.remove(LABELER_CURSOR_CLASS);
-		hit.style.cursor = "";
-		const canvas = hit.querySelector("canvas");
-		if (canvas instanceof HTMLCanvasElement) {
-			canvas.style.cursor = "";
-		}
-	};
 }
 
 async function isJpegBlob(blob: Blob): Promise<boolean> {
@@ -208,49 +125,92 @@ export function LabelingCanvas({
 	const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const frameCountRef = useRef(0);
 	const [playing, setPlaying] = useState(false);
-	const cursorStateRef = useRef<{
-		colors: Record<string, [number, number, number]>;
-		active: string;
-	} | null>(null);
+	const currentCursorCssRef = useRef("");
 
 	useEffect(() => {
 		labelsPathRef.current = humanLabelsPath;
 	}, [humanLabelsPath]);
 
-	useEffect(() => {
-		return () => removeHumanLabelCursorStyle();
+	const cursorRgbKey = state
+		? activePointRgb(state.point_colors, state.active_point).join(",")
+		: "";
+
+	const refreshCursorTargets = useCallback(() => {
+		const cursorCss = currentCursorCssRef.current;
+		if (!cursorCss) return;
+		applyCursorToTargets(
+			[canvasHitRef.current, stageRef.current, canvasRef.current],
+			cursorCss,
+		);
 	}, []);
 
 	useLayoutEffect(() => {
-		const hit = canvasHitRef.current;
-		if (!hit || !state) return;
+		if (!state || !cursorRgbKey) return;
 
-		cursorStateRef.current = {
-			colors: state.point_colors,
-			active: state.active_point,
-		};
-		const dataUrl = humanLabelCursorDataUrl(
-			state.point_colors,
-			state.active_point,
-		);
-		if (!dataUrl) return;
+		const rgb = activePointRgb(state.point_colors, state.active_point);
+		const imageUrl = humanLabelCursorImageUrl(rgb);
+		const cursorCss = humanLabelCursorCss(imageUrl);
+		currentCursorCssRef.current = cursorCss;
 
-		const cancelApply = applyHumanLabelCursor(hit, dataUrl);
+		let cancelled = false;
+		void preloadCursorImage(imageUrl).then(() => {
+			if (!cancelled) refreshCursorTargets();
+		});
+		refreshCursorTargets();
+
 		return () => {
-			cancelApply();
-			removeHumanLabelCursorStyle();
+			cancelled = true;
 		};
-	}, [state?.active_point, state?.point_colors]);
+	}, [state?.active_point, cursorRgbKey, refreshCursorTargets]);
 
-	const bumpHumanLabelCursor = useCallback(() => {
-		const hit = canvasHitRef.current;
-		const cursorState = cursorStateRef.current;
-		if (!hit || !cursorState) return;
-		const dataUrl = humanLabelCursorDataUrl(
-			cursorState.colors,
-			cursorState.active,
-		);
-		if (dataUrl) applyHumanLabelCursor(hit, dataUrl);
+	useEffect(() => {
+		const stage = stageRef.current;
+		if (!stage || !state) return;
+
+		const syncBodyCursor = (e: MouseEvent) => {
+			const canvas = canvasRef.current;
+			const cursorCss = currentCursorCssRef.current;
+			if (!canvas || !cursorCss) {
+				document.body.style.removeProperty("cursor");
+				return;
+			}
+			const rect = canvas.getBoundingClientRect();
+			const over =
+				e.clientX >= rect.left &&
+				e.clientX <= rect.right &&
+				e.clientY >= rect.top &&
+				e.clientY <= rect.bottom;
+			if (over) {
+				document.body.style.setProperty("cursor", cursorCss, "important");
+			} else {
+				document.body.style.removeProperty("cursor");
+			}
+		};
+
+		const clearBodyCursor = () => {
+			document.body.style.removeProperty("cursor");
+		};
+
+		stage.addEventListener("mousemove", syncBodyCursor);
+		stage.addEventListener("mouseleave", clearBodyCursor);
+		return () => {
+			stage.removeEventListener("mousemove", syncBodyCursor);
+			stage.removeEventListener("mouseleave", clearBodyCursor);
+			document.body.style.removeProperty("cursor");
+		};
+	}, [state?.session_id, cursorRgbKey]);
+
+	useEffect(() => {
+		return () => {
+			document.body.style.removeProperty("cursor");
+			for (const el of [
+				canvasHitRef.current,
+				stageRef.current,
+				canvasRef.current,
+			]) {
+				if (el) el.style.removeProperty("cursor");
+			}
+		};
 	}, []);
 
 	const fitCanvasToStage = useCallback(() => {
@@ -265,8 +225,8 @@ export function LabelingCanvas({
 		const scale = Math.min(maxW / canvas.width, maxH / canvas.height);
 		canvas.style.width = `${Math.floor(canvas.width * scale)}px`;
 		canvas.style.height = `${Math.floor(canvas.height * scale)}px`;
-		bumpHumanLabelCursor();
-	}, [bumpHumanLabelCursor]);
+		refreshCursorTargets();
+	}, [refreshCursorTargets]);
 
 	const paintFrameBlob = useCallback(
 		async (blob: Blob, gen: number) => {
@@ -767,7 +727,6 @@ export function LabelingCanvas({
 						<div
 							ref={canvasHitRef}
 							className="label-canvas-hit"
-							onMouseEnter={bumpHumanLabelCursor}
 							onClick={onClick}
 						>
 							<canvas ref={canvasRef} className="label-canvas" />

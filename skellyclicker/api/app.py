@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from skellyclicker.services.human_label_cursor import human_label_cursor_png
 from skellyclicker.services.models import AppSession, WorkflowState
 from skellyclicker.services.errors import SessionConflictError, SessionError
 from skellyclicker.services.session_store import store
@@ -332,6 +333,16 @@ def labeling_state():
 	if not store.labeling_engine:
 		raise HTTPException(status_code=400, detail="Labeler is not open")
 	return store.labeling_engine.state_dict()
+
+
+@app.get("/api/labeling/cursor")
+def labeling_cursor(r: int = 255, g: int = 0, b: int = 255) -> Response:
+	"""Bodypart-colored human-label diamond cursor PNG (Firefox/Linux rejects data-URI cursors)."""
+	return Response(
+		content=human_label_cursor_png(r, g, b),
+		media_type="image/png",
+		headers={"Cache-Control": "public, max-age=86400"},
+	)
 
 
 @app.get("/api/labeling/frame/{frame_number}")
