@@ -301,17 +301,6 @@ export default function App() {
                   DLC project. After analyze, press m in the labeler to overlay
                   machine predictions.
                 </p>
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={session.train_on_machine_labels}
-                    disabled={!session.machine_labels_path}
-                    onChange={(e) =>
-                      run(() => client.setTrainOnMachine(e.target.checked))
-                    }
-                  />
-                  Train on machine labels
-                </label>
                 <button
                   disabled={!canOpenLabeler(session) || openingLabeler}
                   onClick={async () => {
