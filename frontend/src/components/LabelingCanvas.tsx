@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { AppSession, client, LabelingState } from "../api/client";
 import { pathDialog } from "../api/pathDialog";
-import { humanLabelsCsvDefaultName } from "../api/labelsCsvName";
+import { humanLabelsCsvDefaultName, labelsFileBasename } from "../api/labelsCsvName";
 
 interface Props {
 	humanLabelsPath: string | null;
+	machineLabelsPath: string | null;
 	videoPaths: string[] | null;
 	onClose: (session: AppSession) => void;
 	onSessionUpdate: (session: AppSession) => void;
@@ -61,6 +62,7 @@ async function isJpegBlob(blob: Blob): Promise<boolean> {
 
 export function LabelingCanvas({
 	humanLabelsPath,
+	machineLabelsPath,
 	videoPaths,
 	onClose,
 	onSessionUpdate,
@@ -557,6 +559,10 @@ export function LabelingCanvas({
 	const activeCursor = crosshairCursorCss(
 		pointColorCss(state.point_colors, state.active_point),
 	);
+	const humanLabelsName =
+		labelsFileBasename(labelsPathRef.current ?? humanLabelsPath) ??
+		humanLabelsCsvDefaultName(videoPaths);
+	const machineLabelsName = labelsFileBasename(machineLabelsPath);
 
 	return (
 		<div
@@ -615,6 +621,11 @@ export function LabelingCanvas({
 						/>
 					</div>
 					<div className="labeling-close-actions">
+						<p className="hint labeling-save-hint">
+							Save writes <strong>human labels</strong> only. Machine labels are
+							read-only overlay (press m).
+						</p>
+						<div className="labeler-action-btn-row">
 						<button
 							type="button"
 							className="labeler-action-btn"
@@ -635,9 +646,31 @@ export function LabelingCanvas({
 						>
 							Close
 						</button>
+						</div>
 					</div>
 				</div>
 				<aside className="labeling-hud" aria-label="Labeler info">
+					<div className="labeling-hud-section">
+						<h3 className="labeling-hud-title">Label files</h3>
+						<p className="labeling-hud-line">
+							<span className="labeling-hud-file-kind">Human (edit &amp; save)</span>
+							<strong className="labeling-hud-file-name" title={labelsPathRef.current ?? humanLabelsPath ?? undefined}>
+								{humanLabelsName}
+							</strong>
+						</p>
+						{machineLabelsName ? (
+							<p className="labeling-hud-line">
+								<span className="labeling-hud-file-kind">Machine (overlay, m)</span>
+								<strong className="labeling-hud-file-name" title={machineLabelsPath ?? undefined}>
+									{machineLabelsName}
+								</strong>
+							</p>
+						) : (
+							<p className="labeling-hud-line labeling-hud-line--muted">
+								No machine labels loaded
+							</p>
+						)}
+					</div>
 					<div className="labeling-hud-section">
 						<h3 className="labeling-hud-title">Frame</h3>
 						<p className="labeling-hud-line">

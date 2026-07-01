@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppSession, client } from "./api/client";
-import { humanLabelsDisplayName } from "./api/labelsCsvName";
+import { humanLabelsDisplayName, labelsFileBasename } from "./api/labelsCsvName";
 import { pathDialog } from "./api/pathDialog";
 import { DlcSettings } from "./components/DlcSettings";
 import { JobProgressBar, JobProgressState } from "./components/JobProgressBar";
@@ -41,7 +41,12 @@ function sessionLabel(session: AppSession): string {
 
 function headerLabel(session: AppSession, labeling: boolean): string {
   if (labeling) {
-    return humanLabelsDisplayName(session.human_labels_path, session.videos);
+    const human = humanLabelsDisplayName(session.human_labels_path, session.videos);
+    const machine = labelsFileBasename(session.machine_labels_path);
+    if (machine) {
+      return `Human: ${human} · Machine overlay: ${machine}`;
+    }
+    return `Human labels: ${human}`;
   }
   return sessionLabel(session);
 }
@@ -214,6 +219,7 @@ export default function App() {
           {labeling ? (
             <LabelingCanvas
               humanLabelsPath={session.human_labels_path}
+              machineLabelsPath={session.machine_labels_path}
               videoPaths={session.videos}
               onClose={(updated) => setSession(updated)}
               onSessionUpdate={(updated) => setSession(updated)}

@@ -21,14 +21,20 @@ export function humanLabelsCsvDefaultName(
 	return `${timestamp}_${videoPart}_skellyclicker_labels.csv`;
 }
 
+/** Basename of a labels CSV path for compact UI display. */
+export function labelsFileBasename(path: string | null | undefined): string | null {
+	if (!path) return null;
+	const parts = path.split(/[/\\]/);
+	return parts[parts.length - 1] || path;
+}
+
 /** Basename of the human labels CSV in use, or the default name if saving later. */
 export function humanLabelsDisplayName(
 	humanLabelsPath: string | null | undefined,
 	videoPaths: string[] | null | undefined,
 ): string {
 	if (humanLabelsPath) {
-		const parts = humanLabelsPath.split(/[/\\]/);
-		return parts[parts.length - 1] || humanLabelsPath;
+		return labelsFileBasename(humanLabelsPath) ?? humanLabelsPath;
 	}
 	return humanLabelsCsvDefaultName(videoPaths);
 }
