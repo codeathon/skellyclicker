@@ -48,10 +48,22 @@ function pointColorCss(
 	return rgb ? `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` : "rgb(255, 0, 255)";
 }
 
-/** Colored crosshair cursor matching the active bodypart in the legend. */
-function crosshairCursorCss(color: string): string {
-	const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><line x1='12' y1='3' x2='12' y2='21' stroke='${color}' stroke-width='2'/><line x1='3' y1='12' x2='21' y2='12' stroke='${color}' stroke-width='2'/></svg>`;
+function rgbTupleToHex(rgb: [number, number, number]): string {
+	return `#${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Colored + crosshair for human-label placement; hex stroke keeps data-URI cursors reliable. */
+function crosshairCursorCss(rgb: [number, number, number]): string {
+	const hex = rgbTupleToHex(rgb);
+	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="22" stroke="${hex}" stroke-width="2"/><line x1="2" y1="12" x2="22" y2="12" stroke="${hex}" stroke-width="2"/></svg>`;
 	return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`;
+}
+
+function activePointCursor(
+	colors: Record<string, [number, number, number]>,
+	activePoint: string,
+): string {
+	return crosshairCursorCss(colors[activePoint] ?? [255, 0, 255]);
 }
 
 async function isJpegBlob(blob: Blob): Promise<boolean> {
@@ -555,9 +567,8 @@ export function LabelingCanvas({
 
 	if (!state) return <p>Loading labeler…</p>;
 
-	const activeCursor = crosshairCursorCss(
-		pointColorCss(state.point_colors, state.active_point),
-	);
+	const activeCursor = activePointCursor(state.point_colors, state.active_point);
+	const stageCursorStyle = { "--labeler-cursor": activeCursor } as CSSProperties;
 
 	return (
 		<div
@@ -607,11 +618,14 @@ export function LabelingCanvas({
 							Next →
 						</button>
 					</div>
-					<div className="labeling-stage" ref={stageRef}>
+					<div
+						className="labeling-stage"
+						ref={stageRef}
+						style={stageCursorStyle}
+					>
 						<canvas
 							ref={canvasRef}
 							className="label-canvas"
-							style={{ cursor: activeCursor }}
 							onClick={onClick}
 						/>
 					</div>

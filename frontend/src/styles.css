@@ -552,6 +552,8 @@ button:disabled {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  /* Bodypart-colored + crosshair; canvas inherits because custom cursors on canvas are flaky. */
+  cursor: var(--labeler-cursor, crosshair);
 }
 
 .labeling-hud {
@@ -693,6 +695,7 @@ button:disabled {
   max-height: 100%;
   border: 1px solid #2a3441;
   border-radius: 4px;
+  cursor: inherit;
 }
 
 .frame-scrubber {
