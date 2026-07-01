@@ -48,6 +48,49 @@ function pointColorCss(
 	return rgb ? `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` : "rgb(255, 0, 255)";
 }
 
+const CROSSHAIR_HOTSPOT = 12;
+const CROSSHAIR_SIZE = 24;
+const cursorUrlCache = new Map<string, string>();
+
+function rgbTupleToHex(rgb: [number, number, number]): string {
+	return `#${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Native cursor image (PNG data URI) tinted to the active bodypart. */
+function crosshairCursorUrl(rgb: [number, number, number]): string {
+	const key = rgb.join(",");
+	const cached = cursorUrlCache.get(key);
+	if (cached) return cached;
+
+	const canvas = document.createElement("canvas");
+	canvas.width = CROSSHAIR_SIZE;
+	canvas.height = CROSSHAIR_SIZE;
+	const ctx = canvas.getContext("2d");
+	if (!ctx) return "crosshair";
+
+	const center = CROSSHAIR_HOTSPOT;
+	ctx.strokeStyle = rgbTupleToHex(rgb);
+	ctx.lineWidth = 2;
+	ctx.beginPath();
+	ctx.moveTo(center, 2);
+	ctx.lineTo(center, CROSSHAIR_SIZE - 2);
+	ctx.moveTo(2, center);
+	ctx.lineTo(CROSSHAIR_SIZE - 2, center);
+	ctx.stroke();
+
+	const url = `url("${canvas.toDataURL("image/png")}") ${CROSSHAIR_HOTSPOT} ${CROSSHAIR_HOTSPOT}, crosshair`;
+	cursorUrlCache.set(key, url);
+	return url;
+}
+
+function activePointCursor(
+	colors: Record<string, [number, number, number]>,
+	activePoint: string,
+): string {
+	const rgb = colors[activePoint] ?? [255, 0, 255];
+	return crosshairCursorUrl(rgb as [number, number, number]);
+}
+
 async function isJpegBlob(blob: Blob): Promise<boolean> {
 	const header = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
 	return header[0] === 0xff && header[1] === 0xd8;
@@ -82,9 +125,6 @@ export function LabelingCanvas({
 	const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const frameCountRef = useRef(0);
 	const [playing, setPlaying] = useState(false);
-	const [crosshair, setCrosshair] = useState<{ x: number; y: number } | null>(
-		null,
-	);
 
 	useEffect(() => {
 		labelsPathRef.current = humanLabelsPath;
@@ -508,7 +548,7 @@ export function LabelingCanvas({
 		[],
 	);
 
-	const onClick = async (e: React.MouseEvent<HTMLCanvasElement>) => {
+	const onClick = async (e: React.MouseEvent<HTMLDivElement>) => {
 		const canvas = canvasRef.current;
 		if (!canvas || !state || closingRef.current) return;
 		stopPlaying(false);
@@ -549,20 +589,10 @@ export function LabelingCanvas({
 		commitScrub(frameNumber);
 	};
 
-	const onCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-		const rect = e.currentTarget.getBoundingClientRect();
-		setCrosshair({
-			x: e.clientX - rect.left,
-			y: e.clientY - rect.top,
-		});
-	};
-
 	if (!state) return <p>Loading labeler…</p>;
 
-	const activeCrosshairColor = pointColorCss(
-		state.point_colors,
-		state.active_point,
-	);
+	const activeCursor = activePointCursor(state.point_colors, state.active_point);
+	const canvasCursorStyle = { cursor: activeCursor } as CSSProperties;
 
 	return (
 		<div
@@ -613,26 +643,12 @@ export function LabelingCanvas({
 						</button>
 					</div>
 					<div className="labeling-stage" ref={stageRef}>
-						<div className="label-canvas-wrap">
-							<canvas
-								ref={canvasRef}
-								className="label-canvas"
-								onMouseMove={onCanvasMouseMove}
-								onMouseEnter={onCanvasMouseMove}
-								onMouseLeave={() => setCrosshair(null)}
-								onClick={onClick}
-							/>
-							{crosshair && (
-								<div
-									className="labeler-crosshair"
-									style={{
-										left: crosshair.x,
-										top: crosshair.y,
-										color: activeCrosshairColor,
-									}}
-									aria-hidden
-								/>
-							)}
+						<div
+							className="label-canvas-hit"
+							style={canvasCursorStyle}
+							onClick={onClick}
+						>
+							<canvas ref={canvasRef} className="label-canvas" />
 						</div>
 					</div>
 					<div className="labeling-close-actions">
