@@ -554,12 +554,6 @@ button:disabled {
   overflow: hidden;
 }
 
-.label-canvas-hit {
-  display: inline-block;
-  max-width: 100%;
-  max-height: 100%;
-}
-
 .labeling-hud {
   flex: 0 0 18rem;
   min-width: 16rem;
@@ -699,7 +693,6 @@ button:disabled {
   max-height: 100%;
   border: 1px solid #2a3441;
   border-radius: 4px;
-  pointer-events: none;
 }
 
 .frame-scrubber {

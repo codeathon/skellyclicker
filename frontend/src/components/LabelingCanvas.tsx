@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { AppSession, client, LabelingState } from "../api/client";
 import { pathDialog } from "../api/pathDialog";
 import { humanLabelsCsvDefaultName } from "../api/labelsCsvName";
@@ -48,46 +48,10 @@ function pointColorCss(
 	return rgb ? `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` : "rgb(255, 0, 255)";
 }
 
-const CURSOR_HOTSPOT = 16;
-const preloadedCursorImages = new Set<string>();
-
-function activePointRgb(
-	colors: Record<string, [number, number, number]>,
-	activePoint: string,
-): [number, number, number] {
-	return (colors[activePoint] ?? [255, 0, 255]) as [number, number, number];
-}
-
-function humanLabelCursorImageUrl(rgb: [number, number, number]): string {
-	const [r, g, b] = rgb;
-	return `/api/labeling/cursor?r=${r}&g=${g}&b=${b}`;
-}
-
-function humanLabelCursorCss(imageUrl: string): string {
-	// Same-origin PNG URL — Firefox on Ubuntu rejects blob/data-URI cursors.
-	return `url("${imageUrl}") ${CURSOR_HOTSPOT} ${CURSOR_HOTSPOT}, auto`;
-}
-
-function preloadCursorImage(imageUrl: string): Promise<void> {
-	if (preloadedCursorImages.has(imageUrl)) return Promise.resolve();
-	return new Promise((resolve) => {
-		const img = new Image();
-		img.onload = () => {
-			preloadedCursorImages.add(imageUrl);
-			resolve();
-		};
-		img.onerror = () => resolve();
-		img.src = imageUrl;
-	});
-}
-
-function applyCursorToTargets(
-	targets: Array<HTMLElement | null | undefined>,
-	cursorCss: string,
-): void {
-	for (const el of targets) {
-		if (el) el.style.setProperty("cursor", cursorCss, "important");
-	}
+/** Colored crosshair cursor matching the active bodypart in the legend. */
+function crosshairCursorCss(color: string): string {
+	const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><line x1='12' y1='3' x2='12' y2='21' stroke='${color}' stroke-width='2'/><line x1='3' y1='12' x2='21' y2='12' stroke='${color}' stroke-width='2'/></svg>`;
+	return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`;
 }
 
 async function isJpegBlob(blob: Blob): Promise<boolean> {
@@ -109,7 +73,6 @@ export function LabelingCanvas({
 	const [isSaving, setIsSaving] = useState(false);
 	const labelsPathRef = useRef(humanLabelsPath);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
-	const canvasHitRef = useRef<HTMLDivElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
@@ -125,93 +88,10 @@ export function LabelingCanvas({
 	const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const frameCountRef = useRef(0);
 	const [playing, setPlaying] = useState(false);
-	const currentCursorCssRef = useRef("");
 
 	useEffect(() => {
 		labelsPathRef.current = humanLabelsPath;
 	}, [humanLabelsPath]);
-
-	const cursorRgbKey = state
-		? activePointRgb(state.point_colors, state.active_point).join(",")
-		: "";
-
-	const refreshCursorTargets = useCallback(() => {
-		const cursorCss = currentCursorCssRef.current;
-		if (!cursorCss) return;
-		applyCursorToTargets(
-			[canvasHitRef.current, stageRef.current, canvasRef.current],
-			cursorCss,
-		);
-	}, []);
-
-	useLayoutEffect(() => {
-		if (!state || !cursorRgbKey) return;
-
-		const rgb = activePointRgb(state.point_colors, state.active_point);
-		const imageUrl = humanLabelCursorImageUrl(rgb);
-		const cursorCss = humanLabelCursorCss(imageUrl);
-		currentCursorCssRef.current = cursorCss;
-
-		let cancelled = false;
-		void preloadCursorImage(imageUrl).then(() => {
-			if (!cancelled) refreshCursorTargets();
-		});
-		refreshCursorTargets();
-
-		return () => {
-			cancelled = true;
-		};
-	}, [state?.active_point, cursorRgbKey, refreshCursorTargets]);
-
-	useEffect(() => {
-		const stage = stageRef.current;
-		if (!stage || !state) return;
-
-		const syncBodyCursor = (e: MouseEvent) => {
-			const canvas = canvasRef.current;
-			const cursorCss = currentCursorCssRef.current;
-			if (!canvas || !cursorCss) {
-				document.body.style.removeProperty("cursor");
-				return;
-			}
-			const rect = canvas.getBoundingClientRect();
-			const over =
-				e.clientX >= rect.left &&
-				e.clientX <= rect.right &&
-				e.clientY >= rect.top &&
-				e.clientY <= rect.bottom;
-			if (over) {
-				document.body.style.setProperty("cursor", cursorCss, "important");
-			} else {
-				document.body.style.removeProperty("cursor");
-			}
-		};
-
-		const clearBodyCursor = () => {
-			document.body.style.removeProperty("cursor");
-		};
-
-		stage.addEventListener("mousemove", syncBodyCursor);
-		stage.addEventListener("mouseleave", clearBodyCursor);
-		return () => {
-			stage.removeEventListener("mousemove", syncBodyCursor);
-			stage.removeEventListener("mouseleave", clearBodyCursor);
-			document.body.style.removeProperty("cursor");
-		};
-	}, [state?.session_id, cursorRgbKey]);
-
-	useEffect(() => {
-		return () => {
-			document.body.style.removeProperty("cursor");
-			for (const el of [
-				canvasHitRef.current,
-				stageRef.current,
-				canvasRef.current,
-			]) {
-				if (el) el.style.removeProperty("cursor");
-			}
-		};
-	}, []);
 
 	const fitCanvasToStage = useCallback(() => {
 		const stage = stageRef.current;
@@ -225,8 +105,7 @@ export function LabelingCanvas({
 		const scale = Math.min(maxW / canvas.width, maxH / canvas.height);
 		canvas.style.width = `${Math.floor(canvas.width * scale)}px`;
 		canvas.style.height = `${Math.floor(canvas.height * scale)}px`;
-		refreshCursorTargets();
-	}, [refreshCursorTargets]);
+	}, []);
 
 	const paintFrameBlob = useCallback(
 		async (blob: Blob, gen: number) => {
@@ -632,7 +511,7 @@ export function LabelingCanvas({
 		[],
 	);
 
-	const onClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+	const onClick = async (e: React.MouseEvent<HTMLCanvasElement>) => {
 		const canvas = canvasRef.current;
 		if (!canvas || !state || closingRef.current) return;
 		stopPlaying(false);
@@ -674,6 +553,10 @@ export function LabelingCanvas({
 	};
 
 	if (!state) return <p>Loading labeler…</p>;
+
+	const activeCursor = crosshairCursorCss(
+		pointColorCss(state.point_colors, state.active_point),
+	);
 
 	return (
 		<div
@@ -724,13 +607,12 @@ export function LabelingCanvas({
 						</button>
 					</div>
 					<div className="labeling-stage" ref={stageRef}>
-						<div
-							ref={canvasHitRef}
-							className="label-canvas-hit"
+						<canvas
+							ref={canvasRef}
+							className="label-canvas"
+							style={{ cursor: activeCursor }}
 							onClick={onClick}
-						>
-							<canvas ref={canvasRef} className="label-canvas" />
-						</div>
+						/>
 					</div>
 					<div className="labeling-close-actions">
 						<button
