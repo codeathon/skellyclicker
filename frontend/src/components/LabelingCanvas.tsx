@@ -48,24 +48,6 @@ function pointColorCss(
 	return rgb ? `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` : "rgb(255, 0, 255)";
 }
 
-function rgbTupleToHex(rgb: [number, number, number]): string {
-	return `#${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
-}
-
-/** Colored + crosshair for human-label placement; hex stroke keeps data-URI cursors reliable. */
-function crosshairCursorCss(rgb: [number, number, number]): string {
-	const hex = rgbTupleToHex(rgb);
-	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="22" stroke="${hex}" stroke-width="2"/><line x1="2" y1="12" x2="22" y2="12" stroke="${hex}" stroke-width="2"/></svg>`;
-	return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`;
-}
-
-function activePointCursor(
-	colors: Record<string, [number, number, number]>,
-	activePoint: string,
-): string {
-	return crosshairCursorCss(colors[activePoint] ?? [255, 0, 255]);
-}
-
 async function isJpegBlob(blob: Blob): Promise<boolean> {
 	const header = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
 	return header[0] === 0xff && header[1] === 0xd8;
@@ -100,6 +82,9 @@ export function LabelingCanvas({
 	const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const frameCountRef = useRef(0);
 	const [playing, setPlaying] = useState(false);
+	const [crosshair, setCrosshair] = useState<{ x: number; y: number } | null>(
+		null,
+	);
 
 	useEffect(() => {
 		labelsPathRef.current = humanLabelsPath;
@@ -411,6 +396,29 @@ export function LabelingCanvas({
 		}
 	}, [state, fetchAndPaintFrame, stopPlaying]);
 
+	const refreshAfterOverlayToggle = useCallback(
+		async (toggleFn: () => Promise<LabelingState>) => {
+			if (!state || closingRef.current) return;
+			stopPlaying(false);
+			const frame = frameRef.current;
+			const gen = ++previewGenRef.current;
+			try {
+				// Preview playback advances frameRef without committing; sync before repaint.
+				await client.setFrame(frame);
+				const s = await toggleFn();
+				if (gen !== previewGenRef.current) return;
+				frameRef.current = frame;
+				setSliderFrame(frame);
+				setState(s);
+				await fetchAndPaintFrame(frame, false, gen);
+			} catch (err) {
+				if (isIgnorableFetchError(err)) return;
+				setError(err instanceof Error ? err.message : String(err));
+			}
+		},
+		[state, stopPlaying, fetchAndPaintFrame],
+	);
+
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (!state || closingRef.current) return;
@@ -458,36 +466,12 @@ export function LabelingCanvas({
 			}
 			if (key === "m") {
 				e.preventDefault();
-				const gen = ++previewGenRef.current;
-				client
-					.toggleMachineOverlay()
-					.then(async (s) => {
-						if (gen !== previewGenRef.current) return;
-						frameRef.current = s.frame_number;
-						setState(s);
-						await fetchAndPaintFrame(s.frame_number, false, gen);
-					})
-					.catch((err) => {
-						if (isIgnorableFetchError(err)) return;
-						setError(String(err));
-					});
+				void refreshAfterOverlayToggle(() => client.toggleMachineOverlay());
 				return;
 			}
 			if (key === "n") {
 				e.preventDefault();
-				const gen = ++previewGenRef.current;
-				client
-					.toggleLabelNames()
-					.then(async (s) => {
-						if (gen !== previewGenRef.current) return;
-						frameRef.current = s.frame_number;
-						setState(s);
-						await fetchAndPaintFrame(s.frame_number, false, gen);
-					})
-					.catch((err) => {
-						if (isIgnorableFetchError(err)) return;
-						setError(String(err));
-					});
+				void refreshAfterOverlayToggle(() => client.toggleLabelNames());
 				return;
 			}
 			if (key === "h") {
@@ -506,7 +490,7 @@ export function LabelingCanvas({
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [state, closeLabeler, loadFrame, fetchAndPaintFrame, stopPlaying, togglePlaying, undoLastLabel]);
+	}, [state, closeLabeler, loadFrame, fetchAndPaintFrame, stopPlaying, togglePlaying, undoLastLabel, refreshAfterOverlayToggle]);
 
 	const onActivePoint = useCallback(
 		(pointName: string) => {
@@ -565,10 +549,20 @@ export function LabelingCanvas({
 		commitScrub(frameNumber);
 	};
 
+	const onCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+		const rect = e.currentTarget.getBoundingClientRect();
+		setCrosshair({
+			x: e.clientX - rect.left,
+			y: e.clientY - rect.top,
+		});
+	};
+
 	if (!state) return <p>Loading labeler…</p>;
 
-	const activeCursor = activePointCursor(state.point_colors, state.active_point);
-	const stageCursorStyle = { "--labeler-cursor": activeCursor } as CSSProperties;
+	const activeCrosshairColor = pointColorCss(
+		state.point_colors,
+		state.active_point,
+	);
 
 	return (
 		<div
@@ -618,16 +612,28 @@ export function LabelingCanvas({
 							Next →
 						</button>
 					</div>
-					<div
-						className="labeling-stage"
-						ref={stageRef}
-						style={stageCursorStyle}
-					>
-						<canvas
-							ref={canvasRef}
-							className="label-canvas"
-							onClick={onClick}
-						/>
+					<div className="labeling-stage" ref={stageRef}>
+						<div className="label-canvas-wrap">
+							<canvas
+								ref={canvasRef}
+								className="label-canvas"
+								onMouseMove={onCanvasMouseMove}
+								onMouseEnter={onCanvasMouseMove}
+								onMouseLeave={() => setCrosshair(null)}
+								onClick={onClick}
+							/>
+							{crosshair && (
+								<div
+									className="labeler-crosshair"
+									style={{
+										left: crosshair.x,
+										top: crosshair.y,
+										color: activeCrosshairColor,
+									}}
+									aria-hidden
+								/>
+							)}
+						</div>
 					</div>
 					<div className="labeling-close-actions">
 						<button

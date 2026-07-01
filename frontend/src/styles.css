@@ -552,8 +552,13 @@ button:disabled {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  /* Bodypart-colored + crosshair; canvas inherits because custom cursors on canvas are flaky. */
-  cursor: var(--labeler-cursor, crosshair);
+}
+
+.label-canvas-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .labeling-hud {
@@ -695,7 +700,39 @@ button:disabled {
   max-height: 100%;
   border: 1px solid #2a3441;
   border-radius: 4px;
-  cursor: inherit;
+  cursor: none;
+}
+
+.labeler-crosshair {
+  position: absolute;
+  pointer-events: none;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+}
+
+.labeler-crosshair::before,
+.labeler-crosshair::after {
+  content: "";
+  position: absolute;
+  background: currentColor;
+}
+
+.labeler-crosshair::before {
+  left: 50%;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  transform: translateX(-50%);
+}
+
+.labeler-crosshair::after {
+  top: 50%;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  transform: translateY(-50%);
 }
 
 .frame-scrubber {
