@@ -558,7 +558,8 @@ button:disabled {
   display: inline-block;
   max-width: 100%;
   max-height: 100%;
-  cursor: crosshair;
+  /* Custom bodypart diamond is applied from JS once the PNG cursor loads. */
+  cursor: none;
 }
 
 .labeling-hud {

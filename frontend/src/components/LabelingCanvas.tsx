@@ -48,47 +48,107 @@ function pointColorCss(
 	return rgb ? `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` : "rgb(255, 0, 255)";
 }
 
-const CROSSHAIR_HOTSPOT = 12;
-const CROSSHAIR_SIZE = 24;
-const cursorUrlCache = new Map<string, string>();
+const CURSOR_SIZE = 32;
+const CURSOR_HOTSPOT = 16;
+const cursorObjectUrlCache = new Map<string, string>();
 
 function rgbTupleToHex(rgb: [number, number, number]): string {
 	return `#${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** Native cursor image (PNG data URI) tinted to the active bodypart. */
-function crosshairCursorUrl(rgb: [number, number, number]): string {
-	const key = rgb.join(",");
-	const cached = cursorUrlCache.get(key);
-	if (cached) return cached;
-
-	const canvas = document.createElement("canvas");
-	canvas.width = CROSSHAIR_SIZE;
-	canvas.height = CROSSHAIR_SIZE;
-	const ctx = canvas.getContext("2d");
-	if (!ctx) return "crosshair";
-
-	const center = CROSSHAIR_HOTSPOT;
-	ctx.strokeStyle = rgbTupleToHex(rgb);
-	ctx.lineWidth = 2;
+function drawHumanLabelDiamond(
+	ctx: CanvasRenderingContext2D,
+	center: number,
+	radius: number,
+	stroke: string,
+	lineWidth: number,
+): void {
 	ctx.beginPath();
-	ctx.moveTo(center, 2);
-	ctx.lineTo(center, CROSSHAIR_SIZE - 2);
-	ctx.moveTo(2, center);
-	ctx.lineTo(CROSSHAIR_SIZE - 2, center);
+	ctx.moveTo(center, center - radius);
+	ctx.lineTo(center + radius, center);
+	ctx.lineTo(center, center + radius);
+	ctx.lineTo(center - radius, center);
+	ctx.closePath();
+	ctx.strokeStyle = stroke;
+	ctx.lineWidth = lineWidth;
 	ctx.stroke();
-
-	const url = `url("${canvas.toDataURL("image/png")}") ${CROSSHAIR_HOTSPOT} ${CROSSHAIR_HOTSPOT}, crosshair`;
-	cursorUrlCache.set(key, url);
-	return url;
 }
 
-function activePointCursor(
+/** Rasterize the hollow diamond used for human labels in the legend. */
+function renderHumanLabelCursorObjectUrl(
+	rgb: [number, number, number],
+): Promise<string | null> {
+	return new Promise((resolve) => {
+		const canvas = document.createElement("canvas");
+		canvas.width = CURSOR_SIZE;
+		canvas.height = CURSOR_SIZE;
+		const ctx = canvas.getContext("2d");
+		if (!ctx) {
+			resolve(null);
+			return;
+		}
+
+		const center = CURSOR_HOTSPOT;
+		const radius = 10;
+		// White halo matches on-frame human markers for contrast on dark video.
+		drawHumanLabelDiamond(ctx, center, radius, "#ffffff", 3);
+		drawHumanLabelDiamond(ctx, center, radius, rgbTupleToHex(rgb), 2);
+
+		canvas.toBlob((blob) => {
+			if (!blob) {
+				resolve(null);
+				return;
+			}
+			resolve(URL.createObjectURL(blob));
+		}, "image/png");
+	});
+}
+
+function revokeCachedLabelCursors(): void {
+	for (const url of cursorObjectUrlCache.values()) {
+		URL.revokeObjectURL(url);
+	}
+	cursorObjectUrlCache.clear();
+}
+
+async function humanLabelCursorCss(
 	colors: Record<string, [number, number, number]>,
 	activePoint: string,
-): string {
-	const rgb = colors[activePoint] ?? [255, 0, 255];
-	return crosshairCursorUrl(rgb as [number, number, number]);
+): Promise<string> {
+	const rgb = (colors[activePoint] ?? [255, 0, 255]) as [number, number, number];
+	const key = rgb.join(",");
+	let objectUrl = cursorObjectUrlCache.get(key);
+	if (!objectUrl) {
+		objectUrl = (await renderHumanLabelCursorObjectUrl(rgb)) ?? undefined;
+		if (!objectUrl) return "crosshair";
+		cursorObjectUrlCache.set(key, objectUrl);
+	}
+	return `url("${objectUrl}") ${CURSOR_HOTSPOT} ${CURSOR_HOTSPOT}, crosshair`;
+}
+
+/** Browsers ignore cursor images until they finish loading. */
+function applyCursorWhenReady(element: HTMLElement, cursor: string): () => void {
+	let cancelled = false;
+	const match = /url\("([^"]+)"\)\s+(\d+)\s+(\d+)/.exec(cursor);
+	if (!match) {
+		element.style.cursor = cursor;
+		return () => {
+			cancelled = true;
+		};
+	}
+
+	const img = new Image();
+	const apply = () => {
+		if (!cancelled) element.style.cursor = cursor;
+	};
+	img.onload = apply;
+	img.onerror = apply;
+	img.src = match[1];
+	apply();
+
+	return () => {
+		cancelled = true;
+	};
 }
 
 async function isJpegBlob(blob: Blob): Promise<boolean> {
@@ -110,6 +170,7 @@ export function LabelingCanvas({
 	const [isSaving, setIsSaving] = useState(false);
 	const labelsPathRef = useRef(humanLabelsPath);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
+	const canvasHitRef = useRef<HTMLDivElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
@@ -129,6 +190,31 @@ export function LabelingCanvas({
 	useEffect(() => {
 		labelsPathRef.current = humanLabelsPath;
 	}, [humanLabelsPath]);
+
+	useEffect(() => {
+		return () => revokeCachedLabelCursors();
+	}, []);
+
+	useEffect(() => {
+		const hit = canvasHitRef.current;
+		if (!hit || !state) return;
+
+		let cancelApply = () => {};
+		let cancelled = false;
+
+		void humanLabelCursorCss(state.point_colors, state.active_point).then(
+			(cursor) => {
+				if (cancelled) return;
+				cancelApply = applyCursorWhenReady(hit, cursor);
+			},
+		);
+
+		return () => {
+			cancelled = true;
+			cancelApply();
+			hit.style.cursor = "";
+		};
+	}, [state?.active_point, state?.point_colors]);
 
 	const fitCanvasToStage = useCallback(() => {
 		const stage = stageRef.current;
@@ -591,9 +677,6 @@ export function LabelingCanvas({
 
 	if (!state) return <p>Loading labeler…</p>;
 
-	const activeCursor = activePointCursor(state.point_colors, state.active_point);
-	const canvasCursorStyle = { cursor: activeCursor } as CSSProperties;
-
 	return (
 		<div
 			className="labeling"
@@ -644,8 +727,8 @@ export function LabelingCanvas({
 					</div>
 					<div className="labeling-stage" ref={stageRef}>
 						<div
+							ref={canvasHitRef}
 							className="label-canvas-hit"
-							style={canvasCursorStyle}
 							onClick={onClick}
 						>
 							<canvas ref={canvasRef} className="label-canvas" />
