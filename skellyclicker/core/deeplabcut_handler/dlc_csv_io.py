@@ -1,7 +1,11 @@
 """Parse DeepLabCut analysis CSV files into skellyclicker wide format."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -57,3 +61,31 @@ def iter_dlc_video_csvs(csv_folder: Path, filtered: bool) -> list[Path]:
 		elif "DLC_" in name:
 			paths.append(path)
 	return paths
+
+
+def dlc_predictions_to_skellyclicker(
+	predictions: Sequence[dict],
+	frame_numbers: Sequence[int],
+	video_name: str,
+	bodyparts: list[str],
+) -> pd.DataFrame:
+	"""Convert in-memory DLC predictions for selected frames to skellyclicker wide format."""
+	if len(predictions) != len(frame_numbers):
+		raise ValueError("predictions and frame_numbers must have the same length")
+
+	rows: list[dict] = []
+	for frame_num, pred in zip(frame_numbers, predictions):
+		coords = pred["bodyparts"]
+		# Single-animal: (1, n_bodyparts, 3) — x, y, likelihood.
+		if coords.ndim == 3:
+			coords = coords[0]
+		row: dict = {"video": video_name, "frame": int(frame_num)}
+		for i, bp in enumerate(bodyparts):
+			row[f"{bp}_x"] = float(coords[i, 0])
+			row[f"{bp}_y"] = float(coords[i, 1])
+			if coords.shape[1] > 2:
+				row[f"{bp}_likelihood"] = float(coords[i, 2])
+		rows.append(row)
+
+	df = pd.DataFrame(rows)
+	return df.set_index(["video", "frame"])

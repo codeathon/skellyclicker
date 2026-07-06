@@ -25,6 +25,7 @@ from skellyclicker.core.deeplabcut_handler.create_deeplabcut.deelabcut_project_c
     DeeplabcutTrainingConfig,
 )
 from skellyclicker.core.deeplabcut_handler.analyze_videos_dlc import analyze_videos_dlc
+from skellyclicker.core.deeplabcut_handler.partial_analyze_dlc import partial_analyze_human_labels
 from skellyclicker.core.deeplabcut_handler.dlc_csv_io import (
 	dlc_analysis_csv_to_skellyclicker,
 	iter_dlc_video_csvs,
@@ -296,6 +297,22 @@ class DeeplabcutHandler(BaseModel):
             print("Skipping video annotation")
 
         return str(csv_path)
+
+    def partial_analyze_videos(
+        self,
+        human_labels_csv: str,
+        video_paths: list[str],
+        machine_labels_csv: str,
+        progress_callback: Callable[[float | None, str], None] | None = None,
+    ) -> str:
+        """Re-infer frames listed in the human labels CSV and patch machine labels."""
+        return partial_analyze_human_labels(
+            config=str(self.project_config_path),
+            human_labels_csv=human_labels_csv,
+            video_paths=video_paths,
+            machine_labels_csv=machine_labels_csv,
+            progress_callback=progress_callback,
+        )
 
     def merge_csvs_for_skellyclicker(
         self, csv_folder_path: str | Path, output_path: str | Path, filtered: bool = False

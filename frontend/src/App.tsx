@@ -10,9 +10,11 @@ import { NextStepBanner } from "./components/NextStepBanner";
 import { WorkflowStepper } from "./components/WorkflowStepper";
 import {
   canAnalyze,
+  canPartialAnalyze,
   canOpenLabeler,
   canTrain,
   analyzeBlockReason,
+  partialAnalyzeBlockReason,
   deriveWorkflowGuide,
   trainBlockReason,
   StepId,
@@ -161,7 +163,7 @@ export default function App() {
   useEffect(() => {
     if (!session?.active_job_id) return;
     const name =
-      session.workflow_state === "training" ? "Train Network" : "Analyze Videos";
+      session.workflow_state === "training" ? "Train Network" : "Analysis";
     startJob(session.active_job_id, name).catch((e) => setError(String(e)));
   }, [session?.active_job_id, session?.workflow_state, startJob]);
 
@@ -354,6 +356,10 @@ export default function App() {
 
               <div className={stepGroupClass(["train", "analyze"])}>
                 <h3>Train &amp; Analyze</h3>
+                <p className="hint">
+                  After re-train, use Partial Analysis to refresh machine labels on
+                  human-labeled frames only. Use Full Analysis for a complete pass.
+                </p>
                 <DlcSettings session={session} onUpdate={run} />
                 <button
                   disabled={!canTrain(session)}
@@ -373,19 +379,37 @@ export default function App() {
                   <p className="hint inline-hint">{trainBlockReason(session)}</p>
                 )}
                 <button
+                  disabled={!canPartialAnalyze(session)}
+                  title={partialAnalyzeBlockReason(session) ?? undefined}
+                  onClick={async () => {
+                    const paths = session.videos ?? [];
+                    try {
+                      const { job_id } = await client.analyzePartial(paths, true);
+                      await startJob(job_id, "Partial Analysis");
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : String(e));
+                    }
+                  }}
+                >
+                  Partial Analysis
+                </button>
+                {!canPartialAnalyze(session) && partialAnalyzeBlockReason(session) && (
+                  <p className="hint inline-hint">{partialAnalyzeBlockReason(session)}</p>
+                )}
+                <button
                   disabled={!canAnalyze(session)}
                   title={analyzeBlockReason(session) ?? undefined}
                   onClick={async () => {
                     const paths = session.videos ?? [];
                     try {
                       const { job_id } = await client.analyze(paths, true);
-                      await startJob(job_id, "Analyze Videos");
+                      await startJob(job_id, "Full Analysis");
                     } catch (e) {
                       setError(e instanceof Error ? e.message : String(e));
                     }
                   }}
                 >
-                  Analyze Videos
+                  Full Analysis
                 </button>
                 {!canAnalyze(session) && analyzeBlockReason(session) && (
                   <p className="hint inline-hint">{analyzeBlockReason(session)}</p>

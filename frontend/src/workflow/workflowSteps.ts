@@ -114,7 +114,8 @@ const NEXT_COPY: Record<StepId, { title: string; detail: string }> = {
 	},
 	analyze: {
 		title: "Analyze videos",
-		detail: "Run inference on your training videos to generate machine labels.",
+		detail:
+			"Partial Analysis re-runs inference on human-labeled frames only (fast after re-train). Full Analysis processes every frame.",
 	},
 	review: {
 		title: "Review predictions",
@@ -187,6 +188,17 @@ export function analyzeBlockReason(session: AppSession): string | null {
 	return null;
 }
 
+export function partialAnalyzeBlockReason(session: AppSession): string | null {
+	const base = analyzeBlockReason(session);
+	if (base) return base;
+	if (!session.human_labels_path) return "Save human labels before partial analysis";
+	return null;
+}
+
 export function canAnalyze(session: AppSession): boolean {
 	return analyzeBlockReason(session) === null;
+}
+
+export function canPartialAnalyze(session: AppSession): boolean {
+	return partialAnalyzeBlockReason(session) === null;
 }

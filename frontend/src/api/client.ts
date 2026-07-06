@@ -224,6 +224,11 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ video_paths, use_training_videos }),
     }),
+  analyzePartial: (video_paths: string[], use_training_videos: boolean) =>
+    api<{ job_id: string }>("/api/dlc/analyze-partial", {
+      method: "POST",
+      body: JSON.stringify({ video_paths, use_training_videos }),
+    }),
   dialogOpenFile: (title: string, extensions: string[]) =>
     dialogApi({ title, extensions }, "/api/dialog/open-file"),
   dialogOpenFiles: (title: string, extensions: string[]) =>

@@ -424,6 +424,16 @@ def analyze_videos(body: AnalyzeBody):
 	return {"job_id": job.job_id}
 
 
+@app.post("/api/dlc/analyze-partial")
+def analyze_videos_partial(body: AnalyzeBody):
+	try:
+		paths = body.video_paths if not body.use_training_videos else (store.session.videos or [])
+		job = store.job_runner.start_partial_analyze(paths, body.use_training_videos)
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	return {"job_id": job.job_id}
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
 	job = store.job_runner.get_job(job_id)
