@@ -93,7 +93,7 @@ def test_auto_next_disabled_when_frame_has_human_and_machine_labels():
 	assert engine.auto_next_point is False
 
 
-def test_auto_next_enabled_on_frame_without_human_or_machine_labels():
+def test_auto_next_enabled_on_frame_with_machine_but_no_human_labels():
 	from unittest.mock import MagicMock, patch
 
 	mock_handler = MagicMock()
@@ -150,6 +150,84 @@ def test_set_frame_updates_auto_next_for_review_frames():
 
 	engine.set_frame(5)
 	assert engine.auto_next_point is False
+
+
+def test_auto_next_stays_enabled_while_labeling_machine_only_frame():
+	from skellyclicker.core.video_handler.video_models import ClickData
+
+	config = DataHandlerConfig(
+		num_frames=10,
+		video_names=["cam.mp4"],
+		tracked_point_names=["nose", "tail_base", "ear"],
+	)
+	data_handler = DataHandler.from_config(config)
+
+	click_handler = MagicMock()
+	click = ClickData(
+		video_index=0,
+		frame_number=0,
+		video_x=10,
+		video_y=20,
+		window_x=1,
+		window_y=2,
+	)
+	click_handler.process_click.return_value = click
+
+	machine_dh = MagicMock()
+	machine_dh.config.video_names = ["cam.mp4"]
+	machine_dh.get_data_by_video_frame.return_value = {"nose": MagicMock()}
+
+	handler = MagicMock()
+	handler.data_handler = data_handler
+	handler.click_handler = click_handler
+	handler.machine_labels_path = "/tmp/machine.csv"
+	handler.machine_labels_handler = machine_dh
+	handler.ensure_machine_labels_loaded.return_value = None
+	handler.create_grid_image.return_value = None
+
+	engine = LabelingEngine(video_handler=handler)
+	engine.set_frame(0)
+	assert engine.auto_next_point is True
+	assert data_handler.active_point == "nose"
+
+	engine.handle_click(1, 2)
+	assert data_handler.active_point == "tail_base"
+	assert engine.auto_next_point is True
+
+	engine.handle_click(1, 2)
+	assert data_handler.active_point == "ear"
+	assert engine.auto_next_point is True
+
+
+def test_committed_render_on_same_frame_keeps_auto_next_enabled():
+	import numpy as np
+	from unittest.mock import patch
+
+	human_dh = MagicMock()
+	human_dh.config.video_names = ["cam.mp4"]
+	human_dh.get_data_by_video_frame.side_effect = [
+		{},
+		{"nose": MagicMock()},
+	]
+
+	handler = MagicMock()
+	handler.data_handler = human_dh
+	handler.machine_labels_path = "/tmp/machine.csv"
+	handler.machine_labels_handler = MagicMock()
+	handler.machine_labels_handler.config.video_names = ["cam.mp4"]
+	handler.machine_labels_handler.get_data_by_video_frame.return_value = {"nose": MagicMock()}
+	handler.ensure_machine_labels_loaded.return_value = None
+	handler.show_machine_labels = False
+	handler.create_grid_image.return_value = np.zeros((8, 8, 3), dtype=np.uint8)
+
+	engine = LabelingEngine(video_handler=handler)
+	engine.set_frame(0)
+	assert engine.auto_next_point is True
+
+	with patch("cv2.imencode", return_value=(True, np.array([1], dtype=np.uint8))):
+		engine.render_frame_jpeg(0, preview=False)
+
+	assert engine.auto_next_point is True
 
 
 def test_undo_last_label_removes_fresh_placement():

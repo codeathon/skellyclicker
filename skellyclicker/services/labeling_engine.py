@@ -29,6 +29,8 @@ class LabelingEngine(BaseModel):
 	# OpenCV VideoCapture is not thread-safe; scrub previews hit this concurrently.
 	_render_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 	_undo_stack: list[dict[str, Any]] = PrivateAttr(default_factory=list)
+	# Snapshot at frame navigation — machine overlay must not flip us into review mode mid-click.
+	_frame_had_human_on_entry: bool = PrivateAttr(default=False)
 
 	@classmethod
 	def open(
@@ -68,6 +70,7 @@ class LabelingEngine(BaseModel):
 		annotator_cfg.external_hud = True
 		annotator_cfg.show_clicks = False
 		engine.sync_active_point()
+		engine._frame_had_human_on_entry = engine._frame_has_human_labels()
 		engine._sync_auto_next_point_for_frame()
 		engine._sync_annotator_overlay_flags()
 		return engine
@@ -75,6 +78,7 @@ class LabelingEngine(BaseModel):
 	def set_frame(self, frame_number: int) -> None:
 		"""Commit frame navigation and refresh per-frame labeler behavior."""
 		self.frame_number = frame_number
+		self._frame_had_human_on_entry = self._frame_has_human_labels()
 		self._sync_auto_next_point_for_frame()
 		if self.auto_next_point:
 			self.video_handler.data_handler.reset_active_point_for_frame(frame_number)
@@ -102,10 +106,9 @@ class LabelingEngine(BaseModel):
 		return False
 
 	def _sync_auto_next_point_for_frame(self) -> None:
-		"""Auto-advance bodyparts on fresh frames; manual pick when reviewing both layers."""
-		has_human = self._frame_has_human_labels()
-		has_machine = self._frame_has_machine_labels()
-		self.auto_next_point = not (has_human and has_machine)
+		"""Auto-advance on fresh frames; manual pick when reviewing existing human labels."""
+		# Machine-only frames still auto-advance while the user places human labels.
+		self.auto_next_point = not self._frame_had_human_on_entry
 
 	def sync_active_point(self) -> None:
 		"""Pick first unlabeled bodypart on session open only (not on every frame change)."""
@@ -142,8 +145,10 @@ class LabelingEngine(BaseModel):
 		with self._render_lock:
 			render_at = self.frame_number if frame_number is None else frame_number
 			# Preview must not move the committed frame — only POST /labeling/frame does that.
-			if frame_number is not None and not preview:
+			if frame_number is not None and not preview and frame_number != self.frame_number:
 				self.set_frame(frame_number)
+			elif frame_number is not None and not preview:
+				render_at = frame_number
 
 			prev_show = self.video_handler.show_machine_labels
 			prev_help = self.video_handler.image_annotator.config.show_help
