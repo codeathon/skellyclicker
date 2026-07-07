@@ -201,6 +201,7 @@ class DLCJobRunner:
 					analyze_output_folder,
 					dlc_project_dir,
 					resolve_analyze_iteration,
+					resolve_partial_machine_labels_path,
 				)
 
 				job.status = JobStatus.running
@@ -217,12 +218,13 @@ class DLCJobRunner:
 					video_paths,
 					iteration=analyze_iter,
 				)
-				machine_path = Path(output_folder) / (
-					f"skellyclicker_machine_labels_iteration_{analyze_iter}.csv"
+				machine_path = resolve_partial_machine_labels_path(
+					handler.project_config_path,
+					analyze_iter,
+					use_training_videos,
+					video_paths,
+					session.machine_labels_path,
 				)
-				# Patch existing session file when it targets the same iteration output.
-				if session.machine_labels_path:
-					machine_path = Path(session.machine_labels_path)
 
 				def on_progress(fraction: float | None, message: str) -> None:
 					self._set_progress(job, fraction, message)

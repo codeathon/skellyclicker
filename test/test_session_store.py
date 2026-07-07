@@ -195,3 +195,30 @@ def test_save_labeler_rejects_machine_labels_path(fresh_store, tmp_path):
 
 	with pytest.raises(Exception, match="machine labels"):
 		fresh_store.save_labeler(save_path=str(machine_csv))
+
+
+def test_finalize_session_points_machine_labels_at_latest_csv(fresh_store, tmp_path):
+	project = tmp_path / "proj"
+	project.mkdir()
+	config = project / "config.yaml"
+	config.write_text("Task: test\niteration: 2\n")
+	old_csv = (
+		project
+		/ "model_outputs"
+		/ "model_outputs_iteration_0"
+		/ "skellyclicker_machine_labels_iteration_0.csv"
+	)
+	new_csv = (
+		project
+		/ "model_outputs"
+		/ "model_outputs_iteration_2"
+		/ "skellyclicker_machine_labels_iteration_2.csv"
+	)
+	for csv in (old_csv, new_csv):
+		csv.parent.mkdir(parents=True)
+		csv.write_text("video,frame,x,y\n")
+
+	fresh_store.session.dlc_project_path = str(project)
+	fresh_store.session.machine_labels_path = str(old_csv)
+	session = fresh_store.get_session()
+	assert session.machine_labels_path == str(new_csv.resolve())

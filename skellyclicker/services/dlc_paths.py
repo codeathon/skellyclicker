@@ -92,3 +92,119 @@ def analyze_output_folder(
 		Path(video_paths[0]).resolve().parent
 		/ f"{project_name}_model_outputs_iteration_{iter_num}"
 	)
+
+
+def iter_machine_labels_csvs(
+	project_dir: Path,
+	video_paths: list[str] | None = None,
+) -> list[Path]:
+	"""All skellyclicker machine-label CSVs under project and video output folders."""
+	seen: set[Path] = set()
+	found: list[Path] = []
+	roots: list[Path] = [project_dir]
+	if video_paths:
+		for raw in video_paths:
+			parent = Path(raw).expanduser().resolve().parent
+			if parent not in roots:
+				roots.append(parent)
+	patterns = (
+		"model_outputs/**/skellyclicker_machine_labels_iteration_*.csv",
+		"*_model_outputs_iteration_*/skellyclicker_machine_labels_iteration_*.csv",
+	)
+	for root in roots:
+		for pattern in patterns:
+			for path in sorted(root.glob(pattern)):
+				resolved = path.expanduser().resolve()
+				if resolved.is_file() and resolved not in seen:
+					seen.add(resolved)
+					found.append(resolved)
+	return found
+
+
+def machine_labels_iteration(path: Path) -> int | None:
+	"""Parse iteration-N from skellyclicker_machine_labels_iteration_N.csv."""
+	stem = path.name
+	prefix = "skellyclicker_machine_labels_iteration_"
+	if not stem.startswith(prefix) or not stem.endswith(".csv"):
+		return None
+	try:
+		return int(stem[len(prefix) : -len(".csv")])
+	except ValueError:
+		return None
+
+
+def latest_machine_labels_csv(
+	project_dir: Path,
+	video_paths: list[str] | None = None,
+) -> Path | None:
+	"""Newest machine-label CSV by iteration number, then file mtime."""
+	candidates = iter_machine_labels_csvs(project_dir, video_paths)
+	if not candidates:
+		return None
+	return max(
+		candidates,
+		key=lambda path: (
+			machine_labels_iteration(path) or -1,
+			path.stat().st_mtime,
+		),
+	)
+
+
+def resolve_latest_machine_labels_path(
+	project_config_path: str,
+	video_paths: list[str] | None = None,
+) -> Path | None:
+	"""Absolute path to the latest skellyclicker machine-labels CSV, if any."""
+	project_dir = dlc_project_dir(project_config_path)
+	latest = latest_machine_labels_csv(project_dir, video_paths)
+	return latest.resolve() if latest is not None else None
+
+
+def _densest_machine_labels_csv(paths: list[Path]) -> Path | None:
+	"""Prefer the largest CSV — full analyze is dense; partial-only files are small."""
+	if not paths:
+		return None
+	return max(paths, key=lambda path: path.stat().st_size)
+
+
+def resolve_partial_machine_labels_path(
+	project_config_path: str,
+	analyze_iter: int,
+	use_training_videos: bool,
+	video_paths: list[str],
+	session_machine_labels_path: str | None,
+) -> Path:
+	"""Patch target for the current analyze iteration, seeded from the densest prior CSV."""
+	import shutil
+
+	output_folder = analyze_output_folder(
+		project_config_path,
+		use_training_videos,
+		video_paths,
+		iteration=analyze_iter,
+	)
+	target = output_folder / f"skellyclicker_machine_labels_iteration_{analyze_iter}.csv"
+	project_dir = dlc_project_dir(project_config_path)
+	candidates = iter_machine_labels_csvs(project_dir, video_paths)
+	dense_base = _densest_machine_labels_csv(candidates)
+
+	seed_source: Path | None = dense_base
+	if session_machine_labels_path:
+		session_path = Path(session_machine_labels_path).expanduser().resolve()
+		if session_path.is_file():
+			if seed_source is None or session_path.stat().st_size >= seed_source.stat().st_size:
+				seed_source = session_path
+
+	def should_seed() -> bool:
+		if seed_source is None:
+			return False
+		if not target.is_file():
+			return True
+		# Full analyze CSVs are much larger than human-frame-only partial outputs.
+		return target.stat().st_size < seed_source.stat().st_size * 0.5
+
+	if should_seed():
+		target.parent.mkdir(parents=True, exist_ok=True)
+		shutil.copy2(seed_source, target)
+
+	return target

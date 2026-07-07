@@ -12,7 +12,10 @@ from skellyclicker.services.models import AppSession, BackgroundJob, WorkflowSta
 from skellyclicker.services.session_paths import collect_asset_path_checks
 from skellyclicker.services.workflow import refresh_workflow_state
 
-from skellyclicker.services.dlc_paths import resolve_dlc_project_input
+from skellyclicker.services.dlc_paths import (
+	resolve_dlc_project_input,
+	resolve_latest_machine_labels_path,
+)
 
 
 class SessionStore:
@@ -28,8 +31,24 @@ class SessionStore:
 	def get_session(self) -> AppSession:
 		return self._finalize_session()
 
+	def _sync_machine_labels_path_to_latest(self) -> None:
+		"""Point session at the newest skellyclicker machine-labels CSV on disk."""
+		if not self.session.dlc_project_path:
+			return
+		try:
+			_, config_path = resolve_dlc_project_input(self.session.dlc_project_path)
+		except ValueError:
+			return
+		latest = resolve_latest_machine_labels_path(
+			str(config_path),
+			video_paths=self.session.videos,
+		)
+		if latest is not None:
+			self.session.machine_labels_path = str(latest)
+
 	def _finalize_session(self) -> AppSession:
 		"""Attach fresh path checks and derived workflow state before API responses."""
+		self._sync_machine_labels_path_to_latest()
 		self.session.asset_path_checks = collect_asset_path_checks(self.session)
 		return refresh_workflow_state(self.session)
 
