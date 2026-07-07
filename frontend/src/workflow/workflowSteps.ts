@@ -115,12 +115,12 @@ const NEXT_COPY: Record<StepId, { title: string; detail: string }> = {
 	analyze: {
 		title: "Analyze videos",
 		detail:
-			"Partial Analysis re-runs the model on human-labeled frames (fast after re-train). Full Analysis predicts every frame.",
+			"Train & Analyze (Human Labels) runs training then partial analysis on labeled frames. Use Full Analysis for every frame.",
 	},
 	review: {
 		title: "Review predictions",
 		detail:
-			"Open Labeler (m for model overlay), fix human labels, Save & Close, then Train. Use Partial or Full Analysis to refresh machine predictions.",
+			"Open Labeler (m for model overlay), fix human labels, Save & Close, then Train & Analyze (Human Labels) or Full Analysis.",
 	},
 };
 
@@ -202,4 +202,18 @@ export function canAnalyze(session: AppSession): boolean {
 
 export function canPartialAnalyze(session: AppSession): boolean {
 	return partialAnalyzeBlockReason(session) === null;
+}
+
+/** Train then auto-run partial analysis on human-labeled frames. */
+export function trainAndPartialAnalyzeBlockReason(session: AppSession): string | null {
+	const trainReason = trainBlockReason(session);
+	if (trainReason) return trainReason;
+	if (!session.human_labels_path) {
+		return "Save human labels before train & analyze";
+	}
+	return null;
+}
+
+export function canTrainAndPartialAnalyze(session: AppSession): boolean {
+	return trainAndPartialAnalyzeBlockReason(session) === null;
 }

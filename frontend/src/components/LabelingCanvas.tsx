@@ -614,9 +614,11 @@ export function LabelingCanvas({
 			{saveNotice && <p className="hint save-notice">{saveNotice}</p>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
 			<div className="labeling-body">
-				{state.labeled_frame_list?.length > 0 && (
-					<aside className="labeling-frame-list" aria-label="Human-labeled frames">
-						<h3 className="labeling-hud-title">Labeled frames</h3>
+				<aside className="labeling-frame-list" aria-label="Human-labeled frames">
+					<h3 className="labeling-hud-title">
+						Labeled frames: {state.labeled_frames}
+					</h3>
+					{(state.labeled_frame_list ?? []).length > 0 ? (
 						<ul className="labeling-frame-queue">
 							{(state.labeled_frame_list ?? []).map((frame) => (
 								<li key={frame}>
@@ -635,12 +637,11 @@ export function LabelingCanvas({
 								</li>
 							))}
 						</ul>
-					</aside>
-				)}
+					) : (
+						<p className="labeling-frame-list-empty hint">No labeled frames yet</p>
+					)}
+				</aside>
 				<div className="labeling-center">
-					<p className="labeling-labeled-count">
-						Labeled frames: {state.labeled_frames}
-					</p>
 					<div className="labeling-nav">
 						<button
 							type="button"

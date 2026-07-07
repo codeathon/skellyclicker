@@ -498,12 +498,9 @@ button:disabled {
   gap: 0.35rem;
 }
 
-.labeling-labeled-count {
-  margin: 0;
-  flex-shrink: 0;
-  font-size: 0.85rem;
-  color: #a8b8cc;
-  text-align: center;
+.labeling-frame-list-empty {
+	margin: 0.35rem 0 0;
+	font-size: 0.8rem;
 }
 
 .labeling-nav {

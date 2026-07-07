@@ -10,15 +10,16 @@ import { NextStepBanner } from "./components/NextStepBanner";
 import { WorkflowStepper } from "./components/WorkflowStepper";
 import {
   canAnalyze,
-  canPartialAnalyze,
   canOpenLabeler,
-  canTrain,
+  canTrainAndPartialAnalyze,
   analyzeBlockReason,
-  partialAnalyzeBlockReason,
   deriveWorkflowGuide,
-  trainBlockReason,
+  trainAndPartialAnalyzeBlockReason,
   StepId,
 } from "./workflow/workflowSteps";
+
+/** Set true to show Import Human/Machine Labels under Resume / import. */
+const SHOW_LABEL_IMPORT_CONTROLS = false;
 
 function promptText(label: string, defaultValue = ""): string | null {
   const v = window.prompt(label, defaultValue);
@@ -74,6 +75,11 @@ export default function App() {
   const [jobProgress, setJobProgress] = useState<JobProgressState | null>(null);
   const watchedJobRef = useRef<string | null>(null);
   const hideJobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chainPartialAfterTrainRef = useRef(false);
+  const chainVideoPathsRef = useRef<string[]>([]);
+  const startJobRef = useRef<
+    (jobId: string, jobName: string) => Promise<void>
+  >(async () => {});
 
   const refresh = useCallback(async () => {
     setSession(await client.getSession());
@@ -116,6 +122,17 @@ export default function App() {
             message: msg.message ?? (failed ? "Job failed" : "Complete"),
             status: failed ? "failed" : "completed",
           });
+          if (failed) {
+            chainPartialAfterTrainRef.current = false;
+          } else if (chainPartialAfterTrainRef.current) {
+            chainPartialAfterTrainRef.current = false;
+            const paths = chainVideoPathsRef.current;
+            chainVideoPathsRef.current = [];
+            void client
+              .analyzePartial(paths, true)
+              .then(({ job_id }) => startJobRef.current(job_id, "Partial Analysis"))
+              .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+          }
           refresh().then(() => clearJobProgressLater(failed ? 5000 : 2500));
           ws.close();
         }
@@ -164,6 +181,10 @@ export default function App() {
     },
     [watchJob, refresh],
   );
+
+  useEffect(() => {
+    startJobRef.current = startJob;
+  }, [startJob]);
 
   // Fresh in-memory session every time the app is opened (no Start New button).
   useEffect(() => {
@@ -347,78 +368,70 @@ export default function App() {
                 )}
               </div>
 
+              {SHOW_LABEL_IMPORT_CONTROLS && (
               <details
                 className="resume-section"
                 open={guide.showResumeSection}
               >
                 <summary>Resume / import</summary>
                 <div className="resume-section-body">
-                  <button
-                    onClick={async () => {
-                      const p = await pathDialog.openCsv("Human labels CSV");
-                      if (p) run(() => client.setHumanLabels(p));
-                    }}
-                  >
-                    Import Human Labels
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const p = await pathDialog.openCsv("Machine labels CSV");
-                      if (p) run(() => client.setMachineLabels(p));
-                    }}
-                    title="Load model predictions for overlay in the labeler (read-only; press m)"
-                  >
-                    Import Machine Labels
-                  </button>
-                  <p className="hint inline-hint">
-                    Machine labels are model output for review only — not editable in
-                    the labeler.
-                  </p>
+                      <button
+                        onClick={async () => {
+                          const p = await pathDialog.openCsv("Human labels CSV");
+                          if (p) run(() => client.setHumanLabels(p));
+                        }}
+                      >
+                        Import Human Labels
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const p = await pathDialog.openCsv("Machine labels CSV");
+                          if (p) run(() => client.setMachineLabels(p));
+                        }}
+                        title="Load model predictions for overlay in the labeler (read-only; press m)"
+                      >
+                        Import Machine Labels
+                      </button>
+                      <p className="hint inline-hint">
+                        Machine labels are model output for review only — not editable in
+                        the labeler.
+                      </p>
                 </div>
               </details>
+              )}
 
               <div className={stepGroupClass(["train", "analyze"])}>
                 <h3>Train &amp; Analyze</h3>
                 <p className="hint">
-                  Save in the labeler updates human labels only. After re-train, use
-                  Partial Analysis to refresh model predictions on labeled frames, or
-                  Full Analysis for every frame.
+                  Train &amp; Analyze (Human Labels) trains the network, then runs
+                  partial analysis on your labeled frames. Use Full Analysis for every
+                  frame.
                 </p>
                 <DlcSettings session={session} onUpdate={run} />
                 <button
-                  disabled={!canTrain(session)}
-                  title={trainBlockReason(session) ?? undefined}
-                  onClick={async () => {
-                    try {
-                      const { job_id } = await client.train();
-                      await startJob(job_id, "Train Network");
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : String(e));
-                    }
-                  }}
-                >
-                  Train Network
-                </button>
-                {!canTrain(session) && trainBlockReason(session) && (
-                  <p className="hint inline-hint">{trainBlockReason(session)}</p>
-                )}
-                <button
-                  disabled={!canPartialAnalyze(session)}
-                  title={partialAnalyzeBlockReason(session) ?? undefined}
+                  disabled={!canTrainAndPartialAnalyze(session)}
+                  title={trainAndPartialAnalyzeBlockReason(session) ?? undefined}
                   onClick={async () => {
                     const paths = session.videos ?? [];
+                    chainVideoPathsRef.current = paths;
+                    chainPartialAfterTrainRef.current = true;
                     try {
-                      const { job_id } = await client.analyzePartial(paths, true);
-                      await startJob(job_id, "Partial Analysis");
+                      const { job_id } = await client.train();
+                      await startJob(job_id, "Train & Analyze (Human Labels)");
                     } catch (e) {
+                      chainPartialAfterTrainRef.current = false;
+                      chainVideoPathsRef.current = [];
                       setError(e instanceof Error ? e.message : String(e));
                     }
                   }}
                 >
-                  Partial Analysis
+                  Train &amp; Analyze (Human Labels)
                 </button>
-                {!canPartialAnalyze(session) && partialAnalyzeBlockReason(session) && (
-                  <p className="hint inline-hint">{partialAnalyzeBlockReason(session)}</p>
+                {!canTrainAndPartialAnalyze(session) &&
+                  trainAndPartialAnalyzeBlockReason(session) && (
+                  <p className="hint inline-hint">
+                    {trainAndPartialAnalyzeBlockReason(session)}
+                  </p>
                 )}
                 <button
                   disabled={!canAnalyze(session)}
