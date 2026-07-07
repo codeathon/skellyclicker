@@ -60,18 +60,52 @@ class LabelingEngine(BaseModel):
 			tracked_point_names=list(tracked_point_names) if tracked_point_names else None,
 			machine_labels_path=overlay,
 		)
-		# Keep active bodypart fixed when editing an imported human labels CSV.
 		engine = cls(
 			video_handler=handler,
-			auto_next_point=not bool(human_labels_path),
 		)
 		annotator_cfg = engine.video_handler.image_annotator.config
 		annotator_cfg.web_help = True
 		annotator_cfg.external_hud = True
 		annotator_cfg.show_clicks = False
 		engine.sync_active_point()
+		engine._sync_auto_next_point_for_frame()
 		engine._sync_annotator_overlay_flags()
 		return engine
+
+	def set_frame(self, frame_number: int) -> None:
+		"""Commit frame navigation and refresh per-frame labeler behavior."""
+		self.frame_number = frame_number
+		self._sync_auto_next_point_for_frame()
+		if self.auto_next_point:
+			self.video_handler.data_handler.reset_active_point_for_frame(frame_number)
+
+	def _frame_has_human_labels(self) -> bool:
+		"""True when any human label exists on this frame (any camera)."""
+		dh = self.video_handler.data_handler
+		for video_index in range(len(dh.config.video_names)):
+			if dh.get_data_by_video_frame(video_index, self.frame_number):
+				return True
+		return False
+
+	def _frame_has_machine_labels(self) -> bool:
+		"""True when any machine prediction exists on this frame (any camera)."""
+		handler = self.video_handler
+		if not handler.machine_labels_path:
+			return False
+		handler.ensure_machine_labels_loaded()
+		mlh = handler.machine_labels_handler
+		if mlh is None:
+			return False
+		for video_index in range(len(mlh.config.video_names)):
+			if mlh.get_data_by_video_frame(video_index, self.frame_number):
+				return True
+		return False
+
+	def _sync_auto_next_point_for_frame(self) -> None:
+		"""Auto-advance bodyparts on fresh frames; manual pick when reviewing both layers."""
+		has_human = self._frame_has_human_labels()
+		has_machine = self._frame_has_machine_labels()
+		self.auto_next_point = not (has_human and has_machine)
 
 	def sync_active_point(self) -> None:
 		"""Pick first unlabeled bodypart on session open only (not on every frame change)."""
@@ -109,7 +143,7 @@ class LabelingEngine(BaseModel):
 			render_at = self.frame_number if frame_number is None else frame_number
 			# Preview must not move the committed frame — only POST /labeling/frame does that.
 			if frame_number is not None and not preview:
-				self.frame_number = frame_number
+				self.set_frame(frame_number)
 
 			prev_show = self.video_handler.show_machine_labels
 			prev_help = self.video_handler.image_annotator.config.show_help

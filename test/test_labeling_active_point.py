@@ -58,33 +58,98 @@ def test_handle_click_does_not_advance_active_point():
 	assert data_handler.active_point == "nose"
 
 
-def test_open_disables_auto_next_when_human_labels_loaded():
+def test_auto_next_disabled_when_frame_has_human_and_machine_labels():
 	from unittest.mock import MagicMock, patch
 
 	mock_handler = MagicMock()
 	mock_handler.image_annotator.config = MagicMock()
+	mock_handler.machine_labels_path = "/tmp/machine.csv"
+	mock_handler.machine_labels_handler = None
+
+	human_dh = MagicMock()
+	human_dh.config.video_names = ["cam.mp4"]
+	human_dh.get_data_by_video_frame.return_value = {"nose": MagicMock()}
+	mock_handler.data_handler = human_dh
+
+	machine_dh = MagicMock()
+	machine_dh.config.video_names = ["cam.mp4"]
+	machine_dh.get_data_by_video_frame.return_value = {"nose": MagicMock()}
+	mock_handler.ensure_machine_labels_loaded.side_effect = lambda: setattr(
+		mock_handler, "machine_labels_handler", machine_dh
+	)
 
 	with patch(
 		"skellyclicker.services.labeling_engine.VideoHandler.from_videos_for_labeler",
 		return_value=mock_handler,
 	):
-		with_labels = LabelingEngine.open(
+		engine = LabelingEngine.open(
 			video_paths=["/tmp/cam.mp4"],
 			human_labels_path="/tmp/human.csv",
-			machine_labels_path=None,
-			train_on_machine_labels=False,
-			tracked_point_names=["nose"],
-		)
-		fresh = LabelingEngine.open(
-			video_paths=["/tmp/cam.mp4"],
-			human_labels_path=None,
-			machine_labels_path=None,
+			machine_labels_path="/tmp/machine.csv",
 			train_on_machine_labels=False,
 			tracked_point_names=["nose"],
 		)
 
-	assert with_labels.auto_next_point is False
-	assert fresh.auto_next_point is True
+	assert engine.auto_next_point is False
+
+
+def test_auto_next_enabled_on_frame_without_human_or_machine_labels():
+	from unittest.mock import MagicMock, patch
+
+	mock_handler = MagicMock()
+	mock_handler.image_annotator.config = MagicMock()
+	mock_handler.machine_labels_path = "/tmp/machine.csv"
+	mock_handler.machine_labels_handler = MagicMock()
+	mock_handler.machine_labels_handler.config.video_names = ["cam.mp4"]
+	mock_handler.machine_labels_handler.get_data_by_video_frame.return_value = {}
+
+	human_dh = MagicMock()
+	human_dh.config.video_names = ["cam.mp4"]
+	human_dh.get_data_by_video_frame.return_value = {}
+	mock_handler.data_handler = human_dh
+	mock_handler.ensure_machine_labels_loaded.return_value = None
+
+	with patch(
+		"skellyclicker.services.labeling_engine.VideoHandler.from_videos_for_labeler",
+		return_value=mock_handler,
+	):
+		engine = LabelingEngine.open(
+			video_paths=["/tmp/cam.mp4"],
+			human_labels_path="/tmp/human.csv",
+			machine_labels_path="/tmp/machine.csv",
+			train_on_machine_labels=False,
+			tracked_point_names=["nose", "tail_base"],
+		)
+
+	assert engine.auto_next_point is True
+
+
+def test_set_frame_updates_auto_next_for_review_frames():
+	from unittest.mock import MagicMock
+
+	human_dh = MagicMock()
+	human_dh.config.video_names = ["cam.mp4"]
+	human_dh.get_data_by_video_frame.side_effect = [
+		{},
+		{"nose": MagicMock()},
+	]
+
+	machine_dh = MagicMock()
+	machine_dh.config.video_names = ["cam.mp4"]
+	machine_dh.get_data_by_video_frame.return_value = {"nose": MagicMock()}
+
+	handler = MagicMock()
+	handler.data_handler = human_dh
+	handler.machine_labels_path = "/tmp/machine.csv"
+	handler.machine_labels_handler = machine_dh
+	handler.ensure_machine_labels_loaded.return_value = None
+
+	engine = LabelingEngine(video_handler=handler)
+	engine.set_frame(0)
+	assert engine.auto_next_point is True
+
+	engine.set_frame(5)
+	assert engine.auto_next_point is False
 
 
 def test_undo_last_label_removes_fresh_placement():

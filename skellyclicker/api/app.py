@@ -354,7 +354,7 @@ def labeling_click(body: ClickBody):
 def set_frame(body: FrameBody):
 	if not store.labeling_engine:
 		raise HTTPException(status_code=400, detail="Labeler is not open")
-	store.labeling_engine.frame_number = body.frame_number
+	store.labeling_engine.set_frame(body.frame_number)
 	return store.labeling_engine.state_dict()
 
 
