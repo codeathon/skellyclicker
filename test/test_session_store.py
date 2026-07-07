@@ -182,3 +182,16 @@ def test_save_labeler_keeps_labeler_open(fresh_store, tmp_path):
 	assert fresh_store.session.human_labels_path == str(csv_path)
 	assert fresh_store.session.labeled_frame_count == 3
 	assert "Labels saved to" in fresh_store.session.status_message
+
+
+def test_save_labeler_rejects_machine_labels_path(fresh_store, tmp_path):
+	from unittest.mock import MagicMock
+
+	machine_csv = tmp_path / "machine.csv"
+	machine_csv.write_text("video,frame,nose_x,nose_y\n")
+	mock_engine = MagicMock()
+	fresh_store.labeling_engine = mock_engine
+	fresh_store.session.machine_labels_path = str(machine_csv)
+
+	with pytest.raises(Exception, match="machine labels"):
+		fresh_store.save_labeler(save_path=str(machine_csv))

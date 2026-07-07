@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { AppSession, client, LabelingState } from "../api/client";
 import { pathDialog } from "../api/pathDialog";
-import { humanLabelsCsvDefaultName, humanLabelsSaveDefaultName, labelsFileBasename } from "../api/labelsCsvName";
+import { humanLabelsCsvDefaultName, humanLabelsSaveDefaultPath, labelsFileBasename } from "../api/labelsCsvName";
 
 interface Props {
 	humanLabelsPath: string | null;
@@ -361,7 +361,7 @@ export function LabelingCanvas({
 						savePath = existing;
 					} else {
 						const picked = await pathDialog.saveCsvForLabeler(
-							humanLabelsSaveDefaultName(existing, videoPaths),
+							humanLabelsSaveDefaultPath(existing, videoPaths),
 						);
 						savePath = picked ?? undefined;
 					}
@@ -389,7 +389,7 @@ export function LabelingCanvas({
 				savePath = labelsPathRef.current;
 			} else {
 				const picked = await pathDialog.saveCsvForLabeler(
-					humanLabelsSaveDefaultName(labelsPathRef.current, videoPaths),
+					humanLabelsSaveDefaultPath(labelsPathRef.current, videoPaths),
 				);
 				if (!picked) return;
 				savePath = picked;
@@ -710,14 +710,14 @@ export function LabelingCanvas({
 					<div className="labeling-hud-section">
 						<h3 className="labeling-hud-title">Label files</h3>
 						<p className="labeling-hud-line">
-							<span className="labeling-hud-file-kind">Human (edit &amp; save)</span>
+							<span className="labeling-hud-file-kind">Human (diamonds — edit &amp; save)</span>
 							<strong className="labeling-hud-file-name" title={labelsPathRef.current ?? humanLabelsPath ?? undefined}>
 								{humanLabelsName}
 							</strong>
 						</p>
 						{machineLabelsName ? (
 							<p className="labeling-hud-line">
-								<span className="labeling-hud-file-kind">Machine (overlay, m)</span>
+								<span className="labeling-hud-file-kind">Machine (crosses — read-only, m)</span>
 								<strong className="labeling-hud-file-name" title={machineLabelsPath ?? undefined}>
 									{machineLabelsName}
 								</strong>
@@ -753,12 +753,12 @@ export function LabelingCanvas({
 						<div className="label-legend-keys">
 							<span className="label-legend-key">
 								<span className="label-legend-marker label-legend-marker--human label-legend-marker--sample" />
-								Human label
+								Your labels (diamond)
 							</span>
 							{state.has_machine_labels && (
 								<span className="label-legend-key">
 									<span className="label-legend-marker label-legend-marker--machine label-legend-marker--sample" />
-									Machine label
+									Model overlay (cross, m)
 								</span>
 							)}
 						</div>
@@ -772,12 +772,6 @@ export function LabelingCanvas({
 											className="label-legend-marker label-legend-marker--human"
 											style={markerStyle}
 										/>
-										{state.has_machine_labels && (
-											<span
-												className="label-legend-marker label-legend-marker--machine"
-												style={markerStyle}
-											/>
-										)}
 										<button
 											type="button"
 											className={`label-legend-name label-legend-name-btn${

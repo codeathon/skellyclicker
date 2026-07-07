@@ -207,7 +207,8 @@ class SessionStore:
 			video_paths=self.session.videos,
 			human_labels_path=self.session.human_labels_path,
 			machine_labels_path=self.session.machine_labels_path,
-			train_on_machine_labels=self.session.train_on_machine_labels,
+			# Web labeler always edits human labels; machine CSV is overlay-only.
+			train_on_machine_labels=False,
 			tracked_point_names=list(self.session.tracked_point_names),
 		)
 		self.labeling_engine = engine
@@ -229,9 +230,20 @@ class SessionStore:
 			)
 		return 0
 
+	def _assert_human_label_save_path(self, save_path: str | None) -> None:
+		"""Block writes that would overwrite the machine-labels CSV from the labeler."""
+		if not save_path or not self.session.machine_labels_path:
+			return
+		if Path(save_path).resolve() == Path(self.session.machine_labels_path).resolve():
+			raise SessionError(
+				"Cannot save human labels to the machine labels file. "
+				"Pick a human labels path (e.g. skellyclicker_labels.csv)."
+			)
+
 	def save_labeler(self, save_path: str | None = None) -> AppSession:
 		if not self.labeling_engine:
 			raise SessionError("Labeler is not open")
+		self._assert_human_label_save_path(save_path)
 		engine = self.labeling_engine
 		handler = engine.video_handler.data_handler
 		tracked_names = list(handler.config.tracked_point_names)
@@ -247,6 +259,8 @@ class SessionStore:
 	def close_labeler(self, save: bool, save_path: str | None = None) -> AppSession:
 		if not self.labeling_engine:
 			raise SessionError("Labeler is not open")
+		if save:
+			self._assert_human_label_save_path(save_path)
 		engine = self.labeling_engine
 		labeling_id = engine.session_id
 		handler = engine.video_handler.data_handler

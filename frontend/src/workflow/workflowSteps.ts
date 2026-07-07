@@ -106,20 +106,21 @@ const NEXT_COPY: Record<StepId, { title: string; detail: string }> = {
 	},
 	label: {
 		title: "Label frames",
-		detail: "Open Labeler, click bodyparts on key frames, then Save & Close.",
+		detail: "Open Labeler, place diamond markers on key frames, then Save & Close (human labels only).",
 	},
 	train: {
 		title: "Train the network",
-		detail: "Run Train Network once human labels are saved.",
+		detail: "Run Train Network on your saved human labels.",
 	},
 	analyze: {
 		title: "Analyze videos",
 		detail:
-			"Partial Analysis re-runs inference on human-labeled frames only (fast after re-train). Full Analysis processes every frame.",
+			"Partial Analysis re-runs the model on human-labeled frames (fast after re-train). Full Analysis predicts every frame.",
 	},
 	review: {
 		title: "Review predictions",
-		detail: "Open Labeler (press m for machine overlay), fix mistakes, Save & Close, then re-train.",
+		detail:
+			"Open Labeler (m for model overlay), fix human labels, Save & Close, then Train. Use Partial or Full Analysis to refresh machine predictions.",
 	},
 };
 

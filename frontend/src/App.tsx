@@ -49,7 +49,7 @@ function LabelerHeaderLabels({ session }: { session: AppSession }) {
       <span className="session-label labeler-header-row">Human: {human}</span>
       {machine ? (
         <span className="session-label labeler-header-row">
-          Machine overlay: {machine}
+          Model overlay (read-only): {machine}
         </span>
       ) : (
         <span className="session-label labeler-header-row labeler-header-row--muted">
@@ -366,17 +366,23 @@ export default function App() {
                       const p = await pathDialog.openCsv("Machine labels CSV");
                       if (p) run(() => client.setMachineLabels(p));
                     }}
+                    title="Load model predictions for overlay in the labeler (read-only; press m)"
                   >
                     Import Machine Labels
                   </button>
+                  <p className="hint inline-hint">
+                    Machine labels are model output for review only — not editable in
+                    the labeler.
+                  </p>
                 </div>
               </details>
 
               <div className={stepGroupClass(["train", "analyze"])}>
                 <h3>Train &amp; Analyze</h3>
                 <p className="hint">
-                  After re-train, use Partial Analysis to refresh machine labels on
-                  human-labeled frames only. Use Full Analysis for a complete pass.
+                  Save in the labeler updates human labels only. After re-train, use
+                  Partial Analysis to refresh model predictions on labeled frames, or
+                  Full Analysis for every frame.
                 </p>
                 <DlcSettings session={session} onUpdate={run} />
                 <button

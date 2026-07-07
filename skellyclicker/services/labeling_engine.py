@@ -39,7 +39,8 @@ class LabelingEngine(BaseModel):
 		train_on_machine_labels: bool,
 		tracked_point_names: list[str],
 	) -> "LabelingEngine":
-		# Machine-only mode uses machine CSV as primary label source.
+		# Web labeler: human CSV is always editable; machine CSV is read-only overlay.
+		# train_on_machine_labels is ignored when opening from the web API.
 		primary_csv: str | None = None
 		overlay: str | None = None
 		bodyparts: list[str] | None = None
