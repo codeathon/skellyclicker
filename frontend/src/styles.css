@@ -399,6 +399,65 @@ button:disabled {
   margin-left: 0;
 }
 
+.labeler-header-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.labeler-header-row--muted {
+  color: #6a7a8f;
+  font-weight: 400;
+}
+
+.labeling-frame-list {
+  flex: 0 0 9.5rem;
+  min-width: 8rem;
+  max-width: 11rem;
+  overflow-y: auto;
+  border-right: 1px solid #2a3441;
+  padding: 0.35rem 0.5rem 0.5rem;
+  background: #121820;
+}
+
+.labeling-frame-queue {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.labeling-frame-btn {
+  width: 100%;
+  text-align: left;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.82rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #1a2330;
+  color: #c5d4e8;
+  cursor: pointer;
+}
+
+.labeling-frame-btn:hover:not(:disabled) {
+  background: #243044;
+  border-color: #3a4d66;
+}
+
+.labeling-frame-btn--active {
+  background: #2a4060;
+  border-color: #4a7ab8;
+  color: #e7ecf3;
+  font-weight: 600;
+}
+
+.labeling-frame-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .labeling-body {
   flex: 1;
   min-height: 0;

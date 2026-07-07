@@ -223,7 +223,8 @@ class LabelingEngine(BaseModel):
 	def state_dict(self) -> dict:
 		handler = self.video_handler
 		active = handler.data_handler.active_point
-		labeled = len(handler.data_handler.get_nonempty_frames())
+		labeled_frame_list = handler.data_handler.get_nonempty_frames()
+		labeled = len(labeled_frame_list)
 		placed_points, available_points = self._frame_label_status()
 		tracked = handler.data_handler.config.tracked_point_names
 		point_colors = {
@@ -240,6 +241,7 @@ class LabelingEngine(BaseModel):
 			"placed_points": placed_points,
 			"available_points": available_points,
 			"labeled_frames": labeled,
+			"labeled_frame_list": labeled_frame_list,
 			"show_machine_labels": self.show_machine_labels,
 			"show_help": self.show_help,
 			"show_names": self.show_names,

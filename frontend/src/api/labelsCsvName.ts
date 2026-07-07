@@ -38,3 +38,11 @@ export function humanLabelsDisplayName(
 	}
 	return humanLabelsCsvDefaultName(videoPaths);
 }
+
+/** Default filename for the save dialog (basename only). */
+export function humanLabelsSaveDefaultName(
+	humanLabelsPath: string | null | undefined,
+	videoPaths: string[] | null | undefined,
+): string {
+	return humanLabelsDisplayName(humanLabelsPath, videoPaths);
+}

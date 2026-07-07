@@ -52,6 +52,7 @@ export interface LabelingState {
   placed_points: string[];
   available_points: string[];
   labeled_frames: number;
+  labeled_frame_list: number[];
   show_machine_labels: boolean;
   show_help: boolean;
   show_names: boolean;

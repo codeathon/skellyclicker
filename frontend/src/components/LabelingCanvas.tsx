@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { AppSession, client, LabelingState } from "../api/client";
 import { pathDialog } from "../api/pathDialog";
-import { humanLabelsCsvDefaultName, labelsFileBasename } from "../api/labelsCsvName";
+import { humanLabelsCsvDefaultName, humanLabelsSaveDefaultName, labelsFileBasename } from "../api/labelsCsvName";
 
 interface Props {
 	humanLabelsPath: string | null;
@@ -89,6 +89,7 @@ export function LabelingCanvas({
 	const playingRef = useRef(false);
 	const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const frameCountRef = useRef(0);
+	const gridSizeRef = useRef({ w: 0, h: 0 });
 	const [playing, setPlaying] = useState(false);
 
 	useEffect(() => {
@@ -98,16 +99,27 @@ export function LabelingCanvas({
 	const fitCanvasToStage = useCallback(() => {
 		const stage = stageRef.current;
 		const canvas = canvasRef.current;
-		if (!stage || !canvas || canvas.width <= 0 || canvas.height <= 0) return;
+		if (!stage || !canvas) return;
+
+		const displayW = gridSizeRef.current.w || canvas.width;
+		const displayH = gridSizeRef.current.h || canvas.height;
+		if (displayW <= 0 || displayH <= 0) return;
 
 		const maxW = stage.clientWidth;
 		const maxH = stage.clientHeight;
 		if (maxW <= 0 || maxH <= 0) return;
 
-		const scale = Math.min(maxW / canvas.width, maxH / canvas.height);
-		canvas.style.width = `${Math.floor(canvas.width * scale)}px`;
-		canvas.style.height = `${Math.floor(canvas.height * scale)}px`;
+		const scale = Math.min(maxW / displayW, maxH / displayH);
+		canvas.style.width = `${Math.floor(displayW * scale)}px`;
+		canvas.style.height = `${Math.floor(displayH * scale)}px`;
 	}, []);
+
+	useEffect(() => {
+		if (state?.grid_width && state?.grid_height) {
+			gridSizeRef.current = { w: state.grid_width, h: state.grid_height };
+			fitCanvasToStage();
+		}
+	}, [state?.grid_width, state?.grid_height, fitCanvasToStage]);
 
 	const paintFrameBlob = useCallback(
 		async (blob: Blob, gen: number) => {
@@ -123,10 +135,19 @@ export function LabelingCanvas({
 					bitmap.close();
 					return;
 				}
-				canvas.width = bitmap.width;
-				canvas.height = bitmap.height;
+				const gridW = gridSizeRef.current.w;
+				const gridH = gridSizeRef.current.h;
 				const ctx = canvas.getContext("2d");
-				if (ctx) ctx.drawImage(bitmap, 0, 0);
+				// Keep canvas internal size at native grid so scrub preview does not resize the view.
+				if (gridW > 0 && gridH > 0 && ctx) {
+					canvas.width = gridW;
+					canvas.height = gridH;
+					ctx.drawImage(bitmap, 0, 0, gridW, gridH);
+				} else if (ctx) {
+					canvas.width = bitmap.width;
+					canvas.height = bitmap.height;
+					ctx.drawImage(bitmap, 0, 0);
+				}
 				bitmap.close();
 				fitCanvasToStage();
 				setError(null);
@@ -335,11 +356,12 @@ export function LabelingCanvas({
 			try {
 				let savePath: string | undefined;
 				if (save) {
-					if (humanLabelsPath) {
-						savePath = humanLabelsPath;
+					const existing = labelsPathRef.current ?? humanLabelsPath;
+					if (existing) {
+						savePath = existing;
 					} else {
 						const picked = await pathDialog.saveCsvForLabeler(
-							humanLabelsCsvDefaultName(videoPaths),
+							humanLabelsSaveDefaultName(existing, videoPaths),
 						);
 						savePath = picked ?? undefined;
 					}
@@ -367,7 +389,7 @@ export function LabelingCanvas({
 				savePath = labelsPathRef.current;
 			} else {
 				const picked = await pathDialog.saveCsvForLabeler(
-					humanLabelsCsvDefaultName(videoPaths),
+					humanLabelsSaveDefaultName(labelsPathRef.current, videoPaths),
 				);
 				if (!picked) return;
 				savePath = picked;
@@ -554,6 +576,18 @@ export function LabelingCanvas({
 		commitScrub(frameNumber);
 	};
 
+	const jumpToLabeledFrame = useCallback(
+		(frameNumber: number) => {
+			if (isClosing || closingRef.current) return;
+			stopPlaying(false);
+			loadFrame(frameNumber).catch((e) => {
+				if (isIgnorableFetchError(e)) return;
+				setError(String(e));
+			});
+		},
+		[isClosing, loadFrame, stopPlaying],
+	);
+
 	if (!state) return <p>Loading labeler…</p>;
 
 	const activeCursor = crosshairCursorCss(
@@ -580,6 +614,29 @@ export function LabelingCanvas({
 			{saveNotice && <p className="hint save-notice">{saveNotice}</p>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
 			<div className="labeling-body">
+				{state.labeled_frame_list?.length > 0 && (
+					<aside className="labeling-frame-list" aria-label="Human-labeled frames">
+						<h3 className="labeling-hud-title">Labeled frames</h3>
+						<ul className="labeling-frame-queue">
+							{(state.labeled_frame_list ?? []).map((frame) => (
+								<li key={frame}>
+									<button
+										type="button"
+										className={
+											frame === state.frame_number
+												? "labeling-frame-btn labeling-frame-btn--active"
+												: "labeling-frame-btn"
+										}
+										disabled={isClosing}
+										onClick={() => jumpToLabeledFrame(frame)}
+									>
+										Frame {frame + 1}
+									</button>
+								</li>
+							))}
+						</ul>
+					</aside>
+				)}
 				<div className="labeling-center">
 					<p className="labeling-labeled-count">
 						Labeled frames: {state.labeled_frames}

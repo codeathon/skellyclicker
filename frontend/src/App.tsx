@@ -41,14 +41,28 @@ function sessionLabel(session: AppSession): string {
   return "Unsaved session";
 }
 
-function headerLabel(session: AppSession, labeling: boolean): string {
+function LabelerHeaderLabels({ session }: { session: AppSession }) {
+  const human = humanLabelsDisplayName(session.human_labels_path, session.videos);
+  const machine = labelsFileBasename(session.machine_labels_path);
+  return (
+    <div className="labeler-header-labels">
+      <span className="session-label labeler-header-row">Human: {human}</span>
+      {machine ? (
+        <span className="session-label labeler-header-row">
+          Machine overlay: {machine}
+        </span>
+      ) : (
+        <span className="session-label labeler-header-row labeler-header-row--muted">
+          No machine overlay loaded
+        </span>
+      )}
+    </div>
+  );
+}
+
+function headerLabel(session: AppSession, labeling: boolean): string | null {
   if (labeling) {
-    const human = humanLabelsDisplayName(session.human_labels_path, session.videos);
-    const machine = labelsFileBasename(session.machine_labels_path);
-    if (machine) {
-      return `Human: ${human} · Machine overlay: ${machine}`;
-    }
-    return `Human labels: ${human}`;
+    return null;
   }
   return sessionLabel(session);
 }
@@ -195,7 +209,11 @@ export default function App() {
     <div className={labeling ? "app app--labeling" : "app"}>
       <header>
         <div className="header-left">
-          <span className="session-label">{headerLabel(session, labeling)}</span>
+          {labeling ? (
+            <LabelerHeaderLabels session={session} />
+          ) : (
+            <span className="session-label">{headerLabel(session, labeling)}</span>
+          )}
           <p className="status">{session.status_message}</p>
         </div>
         <h1>SkellyClicker</h1>
