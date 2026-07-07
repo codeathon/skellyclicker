@@ -2,6 +2,7 @@
 
 import threading
 from collections.abc import Callable
+from pathlib import Path
 
 from skellyclicker.services.models import BackgroundJob, JobStatus, WorkflowState
 
@@ -159,6 +160,84 @@ class DLCJobRunner:
 					session.workflow_state = WorkflowState.review
 				job.status = JobStatus.completed
 				self._set_progress(job, 1.0, f"Analysis complete: {machine_path}")
+			except Exception as exc:
+				job.status = JobStatus.failed
+				self._set_progress(job, None, str(exc))
+			finally:
+				session.active_job_id = None
+				if session.workflow_state == WorkflowState.analyzing:
+					session.workflow_state = WorkflowState.ready_to_analyze
+				session.status_message = job.message
+
+		threading.Thread(target=worker, daemon=True).start()
+		return job
+
+	def start_partial_analyze(
+		self,
+		video_paths: list[str],
+		use_training_videos: bool,
+	) -> BackgroundJob:
+		store = self._store
+		session = store.session
+		if not store.dlc_handler:
+			raise ValueError("Load a DLC project first")
+		if not video_paths:
+			raise ValueError("No videos to analyze")
+		if not session.human_labels_path:
+			raise ValueError("Load or save human labels before partial analysis")
+
+		handler = store.dlc_handler
+		job = BackgroundJob(name="Partial Analysis")
+		store.jobs[job.job_id] = job
+		session.active_job_id = job.job_id
+		session.workflow_state = WorkflowState.analyzing
+		session.status_message = "Partial analysis…"
+
+		def worker() -> None:
+			try:
+				from deeplabcut.utils import auxiliaryfunctions
+
+				from skellyclicker.services.dlc_paths import (
+					analyze_output_folder,
+					dlc_project_dir,
+					resolve_analyze_iteration,
+				)
+
+				job.status = JobStatus.running
+				self._set_progress(job, 0.0, "Partial analysis started…")
+				project_dir = dlc_project_dir(handler.project_config_path)
+				cfg = auxiliaryfunctions.read_config(handler.project_config_path)
+				analyze_iter = resolve_analyze_iteration(project_dir, cfg)
+				handler.iteration = analyze_iter
+				session.dlc_iteration = analyze_iter
+
+				output_folder = analyze_output_folder(
+					handler.project_config_path,
+					use_training_videos,
+					video_paths,
+					iteration=analyze_iter,
+				)
+				machine_path = Path(output_folder) / (
+					f"skellyclicker_machine_labels_iteration_{analyze_iter}.csv"
+				)
+				# Patch existing session file when it targets the same iteration output.
+				if session.machine_labels_path:
+					machine_path = Path(session.machine_labels_path)
+
+				def on_progress(fraction: float | None, message: str) -> None:
+					self._set_progress(job, fraction, message)
+
+				result_path = handler.partial_analyze_videos(
+					human_labels_csv=session.human_labels_path,
+					video_paths=video_paths,
+					machine_labels_csv=str(machine_path),
+					progress_callback=on_progress,
+				)
+				if use_training_videos:
+					session.machine_labels_path = result_path
+					session.workflow_state = WorkflowState.review
+				job.status = JobStatus.completed
+				self._set_progress(job, 1.0, f"Partial analysis complete: {result_path}")
 			except Exception as exc:
 				job.status = JobStatus.failed
 				self._set_progress(job, None, str(exc))

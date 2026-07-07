@@ -22,6 +22,27 @@ def test_zenity_spawn_cancelled():
 	assert paths == []
 
 
+def test_zenity_spawn_save_passes_default_filename():
+	mock_run = MagicMock(
+		return_value=MagicMock(
+			returncode=0,
+			stdout="/data/videos/skellyclicker_data/labels.csv\n",
+		)
+	)
+	with patch("skellyclicker.services.zenity_dialog.subprocess.run", mock_run):
+		paths = zenity_spawn(
+			"save",
+			"Save human labels CSV",
+			["csv"],
+			"/data/videos/skellyclicker_data/2026_labels.csv",
+		)
+	assert paths == ["/data/videos/skellyclicker_data/labels.csv"]
+	args = mock_run.call_args[0][0]
+	assert "--filename" in args
+	idx = args.index("--filename")
+	assert args[idx + 1] == "/data/videos/skellyclicker_data/2026_labels.csv"
+
+
 def test_zenity_spawn_error():
 	mock_run = MagicMock(
 		return_value=MagicMock(returncode=255, stdout="", stderr="Gdk: no display"),

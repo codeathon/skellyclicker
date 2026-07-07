@@ -10,6 +10,12 @@ export type WorkflowState =
   | "analyzing"
   | "review";
 
+export interface AssetPathCheck {
+  kind: string;
+  path: string;
+  exists: boolean;
+}
+
 export interface AppSession {
   session_id: string;
   generation: number;
@@ -33,6 +39,7 @@ export interface AppSession {
   training_batch_size: number;
   filter_predictions: boolean;
   annotate_videos: boolean;
+  asset_path_checks: AssetPathCheck[];
 }
 
 export interface LabelingState {
@@ -41,9 +48,14 @@ export interface LabelingState {
   frame_count: number;
   active_point: string;
   tracked_points: string[];
+  point_colors: Record<string, [number, number, number]>;
+  placed_points: string[];
+  available_points: string[];
   labeled_frames: number;
+  labeled_frame_list: number[];
   show_machine_labels: boolean;
   show_help: boolean;
+  show_names: boolean;
   has_machine_labels: boolean;
   auto_next_point: boolean;
   grid_width: number;
@@ -164,6 +176,11 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ save, save_path: savePath ?? null }),
     }),
+  saveLabeler: (savePath?: string) =>
+    api<AppSession>("/api/labeling/save", {
+      method: "POST",
+      body: JSON.stringify({ save_path: savePath ?? null }),
+    }),
   labelingState: () => api<LabelingState>("/api/labeling/state"),
   setFrame: (frame_number: number) =>
     api<LabelingState>("/api/labeling/frame", {
@@ -179,6 +196,15 @@ export const client = {
     api<LabelingState>("/api/labeling/toggle-machine-overlay", { method: "POST" }),
   toggleHelp: () =>
     api<LabelingState>("/api/labeling/toggle-help", { method: "POST" }),
+  toggleLabelNames: () =>
+    api<LabelingState>("/api/labeling/toggle-names", { method: "POST" }),
+  setActivePoint: (point_name: string) =>
+    api<LabelingState>("/api/labeling/active-point", {
+      method: "POST",
+      body: JSON.stringify({ point_name }),
+    }),
+  undoLabel: () =>
+    api<LabelingState>("/api/labeling/undo", { method: "POST" }),
   loadDlc: (path: string) =>
     api<AppSession>("/api/dlc/load", {
       method: "POST",
@@ -196,6 +222,11 @@ export const client = {
   train: () => api<{ job_id: string }>("/api/dlc/train", { method: "POST" }),
   analyze: (video_paths: string[], use_training_videos: boolean) =>
     api<{ job_id: string }>("/api/dlc/analyze", {
+      method: "POST",
+      body: JSON.stringify({ video_paths, use_training_videos }),
+    }),
+  analyzePartial: (video_paths: string[], use_training_videos: boolean) =>
+    api<{ job_id: string }>("/api/dlc/analyze-partial", {
       method: "POST",
       body: JSON.stringify({ video_paths, use_training_videos }),
     }),

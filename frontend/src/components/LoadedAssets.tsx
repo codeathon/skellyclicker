@@ -4,33 +4,98 @@ interface Props {
   session: AppSession;
 }
 
-function Row({ label, value }: { label: string; value: string | null | undefined }) {
+function pathExists(session: AppSession, path: string | null | undefined): boolean | null {
+  if (!path) return null;
+  const check = session.asset_path_checks?.find((c) => c.path === path);
+  return check ? check.exists : null;
+}
+
+/** One status for the Videos row: all found, any missing, or none listed. */
+function videosExistStatus(session: AppSession): boolean | null {
+  const videos = session.videos;
+  if (!videos?.length) return null;
+  const checks = session.asset_path_checks?.filter((c) => c.kind === "video") ?? [];
+  if (checks.length > 0) {
+    return checks.every((c) => c.exists);
+  }
+  const statuses = videos.map((p) => pathExists(session, p));
+  if (statuses.some((s) => s === false)) return false;
+  if (statuses.every((s) => s === true)) return true;
+  return null;
+}
+
+function PathStatus({ exists }: { exists: boolean | null }) {
+  if (exists === null) return null;
+  return (
+    <span
+      className={`asset-status ${exists ? "asset-status--ok" : "asset-status--missing"}`}
+      title={exists ? "Found on disk" : "Not found on disk"}
+      aria-label={exists ? "Found on disk" : "Not found on disk"}
+    >
+      {exists ? "✓" : "✗"}
+    </span>
+  );
+}
+
+function Row({
+  label,
+  value,
+  exists,
+}: {
+  label: string;
+  value: string | null | undefined;
+  exists?: boolean | null;
+}) {
   return (
     <div className="asset-row">
-      <span className="asset-label">{label}</span>
+      <div className="asset-row-header">
+        {exists !== undefined && <PathStatus exists={exists ?? null} />}
+        {label ? <span className="asset-label">{label}</span> : null}
+      </div>
       <span className="asset-value">{value || "—"}</span>
     </div>
   );
 }
 
 export function LoadedAssets({ session }: Props) {
+  const checks = session.asset_path_checks ?? [];
+  const missingCount = checks.filter((c) => !c.exists).length;
+  const hasChecks = checks.length > 0;
+
   return (
     <section className="panel assets">
       <h2>Loaded Assets</h2>
+      {hasChecks && missingCount > 0 && (
+        <p className="asset-path-warning">
+          {missingCount} path{missingCount === 1 ? "" : "s"} from this session were not found on
+          disk.
+        </p>
+      )}
       <Row
         label="Videos"
         value={
-          session.videos?.length
-            ? `${session.videos.length} file(s)`
-            : null
+          session.videos?.length ? `${session.videos.length} file(s)` : null
         }
+        exists={videosExistStatus(session)}
       />
       {session.videos?.map((p) => (
         <Row key={p} label="" value={p} />
       ))}
-      <Row label="Human labels" value={session.human_labels_path} />
-      <Row label="Machine labels" value={session.machine_labels_path} />
-      <Row label="DLC project" value={session.dlc_project_path} />
+      <Row
+        label="Human labels"
+        value={session.human_labels_path}
+        exists={pathExists(session, session.human_labels_path)}
+      />
+      <Row
+        label="Machine labels"
+        value={session.machine_labels_path}
+        exists={pathExists(session, session.machine_labels_path)}
+      />
+      <Row
+        label="DLC project"
+        value={session.dlc_project_path}
+        exists={pathExists(session, session.dlc_project_path)}
+      />
       <Row
         label="Iteration"
         value={

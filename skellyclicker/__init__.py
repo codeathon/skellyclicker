@@ -15,6 +15,10 @@ VideoPathString = str
 ClickDataCSVPathString = str
 
 MAX_WINDOW_SIZE = (1920, 1080)
+# Scrub-preview composite cap (committed labeler uses native per-camera grid).
+PREVIEW_MAX_WINDOW_SIZE = (1920, 1080)
+LABELER_JPEG_QUALITY_COMMITTED = 92
+LABELER_JPEG_QUALITY_PREVIEW = 65
 ZOOM_STEP = 1.1
 ZOOM_MIN = 1.0
 ZOOM_MAX = 10.0

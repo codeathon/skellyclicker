@@ -106,19 +106,21 @@ const NEXT_COPY: Record<StepId, { title: string; detail: string }> = {
 	},
 	label: {
 		title: "Label frames",
-		detail: "Open Labeler, click bodyparts on key frames, then Save & Close.",
+		detail: "Open Labeler, place diamond markers on key frames, then Save & Close (human labels only).",
 	},
 	train: {
 		title: "Train the network",
-		detail: "Run Train Network once human labels are saved.",
+		detail: "Run Train Network on your saved human labels.",
 	},
 	analyze: {
 		title: "Analyze videos",
-		detail: "Run inference on your training videos to generate machine labels.",
+		detail:
+			"Train & Analyze (Human Labels) runs training then partial analysis on labeled frames. Use Full Analysis for every frame.",
 	},
 	review: {
 		title: "Review predictions",
-		detail: "Open Labeler (press m for machine overlay), fix mistakes, Save & Close, then re-train.",
+		detail:
+			"Open Labeler (m for model overlay), fix human labels, Save & Close, then Train & Analyze (Human Labels) or Full Analysis.",
 	},
 };
 
@@ -187,6 +189,31 @@ export function analyzeBlockReason(session: AppSession): string | null {
 	return null;
 }
 
+export function partialAnalyzeBlockReason(session: AppSession): string | null {
+	const base = analyzeBlockReason(session);
+	if (base) return base;
+	if (!session.human_labels_path) return "Save human labels before partial analysis";
+	return null;
+}
+
 export function canAnalyze(session: AppSession): boolean {
 	return analyzeBlockReason(session) === null;
+}
+
+export function canPartialAnalyze(session: AppSession): boolean {
+	return partialAnalyzeBlockReason(session) === null;
+}
+
+/** Train then auto-run partial analysis on human-labeled frames. */
+export function trainAndPartialAnalyzeBlockReason(session: AppSession): string | null {
+	const trainReason = trainBlockReason(session);
+	if (trainReason) return trainReason;
+	if (!session.human_labels_path) {
+		return "Save human labels before train & analyze";
+	}
+	return null;
+}
+
+export function canTrainAndPartialAnalyze(session: AppSession): boolean {
+	return trainAndPartialAnalyzeBlockReason(session) === null;
 }

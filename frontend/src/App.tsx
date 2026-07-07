@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppSession, client } from "./api/client";
+import { humanLabelsDisplayName, labelsFileBasename } from "./api/labelsCsvName";
 import { pathDialog } from "./api/pathDialog";
 import { DlcSettings } from "./components/DlcSettings";
 import { JobProgressBar, JobProgressState } from "./components/JobProgressBar";
@@ -10,12 +11,15 @@ import { WorkflowStepper } from "./components/WorkflowStepper";
 import {
   canAnalyze,
   canOpenLabeler,
-  canTrain,
+  canTrainAndPartialAnalyze,
   analyzeBlockReason,
   deriveWorkflowGuide,
-  trainBlockReason,
+  trainAndPartialAnalyzeBlockReason,
   StepId,
 } from "./workflow/workflowSteps";
+
+/** Set true to show Import Human/Machine Labels under Resume / import. */
+const SHOW_LABEL_IMPORT_CONTROLS = false;
 
 function promptText(label: string, defaultValue = ""): string | null {
   const v = window.prompt(label, defaultValue);
@@ -29,13 +33,39 @@ function parseBodyparts(raw: string): string[] {
     .filter(Boolean);
 }
 
-/** Shown in header — saved filename or unsaved placeholder. */
+/** Shown in header — saved session filename or unsaved placeholder. */
 function sessionLabel(session: AppSession): string {
   if (session.session_saved_path) {
     const parts = session.session_saved_path.split(/[/\\]/);
     return parts[parts.length - 1] || session.session_saved_path;
   }
   return "Unsaved session";
+}
+
+function LabelerHeaderLabels({ session }: { session: AppSession }) {
+  const human = humanLabelsDisplayName(session.human_labels_path, session.videos);
+  const machine = labelsFileBasename(session.machine_labels_path);
+  return (
+    <div className="labeler-header-labels">
+      <span className="session-label labeler-header-row">Human: {human}</span>
+      {machine ? (
+        <span className="session-label labeler-header-row">
+          Model overlay (read-only): {machine}
+        </span>
+      ) : (
+        <span className="session-label labeler-header-row labeler-header-row--muted">
+          No machine overlay loaded
+        </span>
+      )}
+    </div>
+  );
+}
+
+function headerLabel(session: AppSession, labeling: boolean): string | null {
+  if (labeling) {
+    return null;
+  }
+  return sessionLabel(session);
 }
 
 export default function App() {
@@ -45,6 +75,11 @@ export default function App() {
   const [jobProgress, setJobProgress] = useState<JobProgressState | null>(null);
   const watchedJobRef = useRef<string | null>(null);
   const hideJobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chainPartialAfterTrainRef = useRef(false);
+  const chainVideoPathsRef = useRef<string[]>([]);
+  const startJobRef = useRef<
+    (jobId: string, jobName: string) => Promise<void>
+  >(async () => {});
 
   const refresh = useCallback(async () => {
     setSession(await client.getSession());
@@ -87,6 +122,17 @@ export default function App() {
             message: msg.message ?? (failed ? "Job failed" : "Complete"),
             status: failed ? "failed" : "completed",
           });
+          if (failed) {
+            chainPartialAfterTrainRef.current = false;
+          } else if (chainPartialAfterTrainRef.current) {
+            chainPartialAfterTrainRef.current = false;
+            const paths = chainVideoPathsRef.current;
+            chainVideoPathsRef.current = [];
+            void client
+              .analyzePartial(paths, true)
+              .then(({ job_id }) => startJobRef.current(job_id, "Partial Analysis"))
+              .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+          }
           refresh().then(() => clearJobProgressLater(failed ? 5000 : 2500));
           ws.close();
         }
@@ -136,6 +182,10 @@ export default function App() {
     [watchJob, refresh],
   );
 
+  useEffect(() => {
+    startJobRef.current = startJob;
+  }, [startJob]);
+
   // Fresh in-memory session every time the app is opened (no Start New button).
   useEffect(() => {
     client
@@ -148,7 +198,7 @@ export default function App() {
   useEffect(() => {
     if (!session?.active_job_id) return;
     const name =
-      session.workflow_state === "training" ? "Train Network" : "Analyze Videos";
+      session.workflow_state === "training" ? "Train Network" : "Analysis";
     startJob(session.active_job_id, name).catch((e) => setError(String(e)));
   }, [session?.active_job_id, session?.workflow_state, startJob]);
 
@@ -180,7 +230,11 @@ export default function App() {
     <div className={labeling ? "app app--labeling" : "app"}>
       <header>
         <div className="header-left">
-          <span className="session-label">{sessionLabel(session)}</span>
+          {labeling ? (
+            <LabelerHeaderLabels session={session} />
+          ) : (
+            <span className="session-label">{headerLabel(session, labeling)}</span>
+          )}
           <p className="status">{session.status_message}</p>
         </div>
         <h1>SkellyClicker</h1>
@@ -206,8 +260,10 @@ export default function App() {
           {labeling ? (
             <LabelingCanvas
               humanLabelsPath={session.human_labels_path}
+              machineLabelsPath={session.machine_labels_path}
               videoPaths={session.videos}
               onClose={(updated) => setSession(updated)}
+              onSessionUpdate={(updated) => setSession(updated)}
             />
           ) : (
             <section className="panel actions">
@@ -292,17 +348,6 @@ export default function App() {
                   DLC project. After analyze, press m in the labeler to overlay
                   machine predictions.
                 </p>
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={session.train_on_machine_labels}
-                    disabled={!session.machine_labels_path}
-                    onChange={(e) =>
-                      run(() => client.setTrainOnMachine(e.target.checked))
-                    }
-                  />
-                  Train on machine labels
-                </label>
                 <button
                   disabled={!canOpenLabeler(session) || openingLabeler}
                   onClick={async () => {
@@ -323,50 +368,70 @@ export default function App() {
                 )}
               </div>
 
+              {SHOW_LABEL_IMPORT_CONTROLS && (
               <details
                 className="resume-section"
                 open={guide.showResumeSection}
               >
                 <summary>Resume / import</summary>
                 <div className="resume-section-body">
-                  <button
-                    onClick={async () => {
-                      const p = await pathDialog.openCsv("Human labels CSV");
-                      if (p) run(() => client.setHumanLabels(p));
-                    }}
-                  >
-                    Import Human Labels
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const p = await pathDialog.openCsv("Machine labels CSV");
-                      if (p) run(() => client.setMachineLabels(p));
-                    }}
-                  >
-                    Import Machine Labels
-                  </button>
+                      <button
+                        onClick={async () => {
+                          const p = await pathDialog.openCsv("Human labels CSV");
+                          if (p) run(() => client.setHumanLabels(p));
+                        }}
+                      >
+                        Import Human Labels
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const p = await pathDialog.openCsv("Machine labels CSV");
+                          if (p) run(() => client.setMachineLabels(p));
+                        }}
+                        title="Load model predictions for overlay in the labeler (read-only; press m)"
+                      >
+                        Import Machine Labels
+                      </button>
+                      <p className="hint inline-hint">
+                        Machine labels are model output for review only — not editable in
+                        the labeler.
+                      </p>
                 </div>
               </details>
+              )}
 
               <div className={stepGroupClass(["train", "analyze"])}>
                 <h3>Train &amp; Analyze</h3>
+                <p className="hint">
+                  Train &amp; Analyze (Human Labels) trains the network, then runs
+                  partial analysis on your labeled frames. Use Full Analysis for every
+                  frame.
+                </p>
                 <DlcSettings session={session} onUpdate={run} />
                 <button
-                  disabled={!canTrain(session)}
-                  title={trainBlockReason(session) ?? undefined}
+                  disabled={!canTrainAndPartialAnalyze(session)}
+                  title={trainAndPartialAnalyzeBlockReason(session) ?? undefined}
                   onClick={async () => {
+                    const paths = session.videos ?? [];
+                    chainVideoPathsRef.current = paths;
+                    chainPartialAfterTrainRef.current = true;
                     try {
                       const { job_id } = await client.train();
-                      await startJob(job_id, "Train Network");
+                      await startJob(job_id, "Train & Analyze (Human Labels)");
                     } catch (e) {
+                      chainPartialAfterTrainRef.current = false;
+                      chainVideoPathsRef.current = [];
                       setError(e instanceof Error ? e.message : String(e));
                     }
                   }}
                 >
-                  Train Network
+                  Train &amp; Analyze (Human Labels)
                 </button>
-                {!canTrain(session) && trainBlockReason(session) && (
-                  <p className="hint inline-hint">{trainBlockReason(session)}</p>
+                {!canTrainAndPartialAnalyze(session) &&
+                  trainAndPartialAnalyzeBlockReason(session) && (
+                  <p className="hint inline-hint">
+                    {trainAndPartialAnalyzeBlockReason(session)}
+                  </p>
                 )}
                 <button
                   disabled={!canAnalyze(session)}
@@ -375,13 +440,13 @@ export default function App() {
                     const paths = session.videos ?? [];
                     try {
                       const { job_id } = await client.analyze(paths, true);
-                      await startJob(job_id, "Analyze Videos");
+                      await startJob(job_id, "Full Analysis");
                     } catch (e) {
                       setError(e instanceof Error ? e.message : String(e));
                     }
                   }}
                 >
-                  Analyze Videos
+                  Full Analysis
                 </button>
                 {!canAnalyze(session) && analyzeBlockReason(session) && (
                   <p className="hint inline-hint">{analyzeBlockReason(session)}</p>

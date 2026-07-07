@@ -141,13 +141,13 @@ export const pathDialog = {
 			"saving labels",
 		).then((paths) => paths?.[0] ?? null),
 
-	/** Labeler save — null means use the server default path under the video folder. */
-	saveCsvForLabeler: async (defaultName?: string) => {
+	/** Labeler save — null means cancelled. Pass a full path so zenity pre-fills the name field. */
+	saveCsvForLabeler: async (defaultPath?: string) => {
 		try {
 			const { paths } = await client.dialogSaveFile(
 				"Save human labels CSV",
 				["csv"],
-				defaultName ?? humanLabelsCsvDefaultName(null),
+				defaultPath ?? humanLabelsCsvDefaultName(null),
 			);
 			return paths[0] ?? null;
 		} catch (e) {

@@ -68,6 +68,10 @@ class CloseLabelerBody(BaseModel):
 	save_path: str | None = None
 
 
+class SaveLabelerBody(BaseModel):
+	save_path: str | None = None
+
+
 class ClickBody(BaseModel):
 	x: int
 	y: int
@@ -75,6 +79,10 @@ class ClickBody(BaseModel):
 
 class FrameBody(BaseModel):
 	frame_number: int
+
+
+class ActivePointBody(BaseModel):
+	point_name: str
 
 
 class AnalyzeBody(BaseModel):
@@ -314,6 +322,11 @@ def close_labeler(body: CloseLabelerBody) -> AppSession:
 	return store.close_labeler(save=body.save, save_path=body.save_path)
 
 
+@app.post("/api/labeling/save", response_model=AppSession)
+def save_labeler(body: SaveLabelerBody) -> AppSession:
+	return store.save_labeler(save_path=body.save_path)
+
+
 @app.get("/api/labeling/state")
 def labeling_state():
 	if not store.labeling_engine:
@@ -341,8 +354,7 @@ def labeling_click(body: ClickBody):
 def set_frame(body: FrameBody):
 	if not store.labeling_engine:
 		raise HTTPException(status_code=400, detail="Labeler is not open")
-	store.labeling_engine.frame_number = body.frame_number
-	store.labeling_engine.sync_active_point()
+	store.labeling_engine.set_frame(body.frame_number)
 	return store.labeling_engine.state_dict()
 
 
@@ -361,7 +373,36 @@ def toggle_help_overlay():
 		raise HTTPException(status_code=400, detail="Labeler is not open")
 	eng = store.labeling_engine
 	eng.show_help = not eng.show_help
+	eng._sync_annotator_overlay_flags()
 	return eng.state_dict()
+
+
+@app.post("/api/labeling/toggle-names")
+def toggle_label_names():
+	if not store.labeling_engine:
+		raise HTTPException(status_code=400, detail="Labeler is not open")
+	store.labeling_engine.toggle_show_names()
+	return store.labeling_engine.state_dict()
+
+
+@app.post("/api/labeling/active-point")
+def set_active_point(body: ActivePointBody):
+	if not store.labeling_engine:
+		raise HTTPException(status_code=400, detail="Labeler is not open")
+	try:
+		store.labeling_engine.set_active_point(body.point_name)
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	return store.labeling_engine.state_dict()
+
+
+@app.post("/api/labeling/undo")
+def undo_label():
+	if not store.labeling_engine:
+		raise HTTPException(status_code=400, detail="Labeler is not open")
+	if not store.labeling_engine.undo():
+		raise HTTPException(status_code=400, detail="Nothing to undo")
+	return store.labeling_engine.state_dict()
 
 
 @app.post("/api/dlc/train")
@@ -378,6 +419,16 @@ def analyze_videos(body: AnalyzeBody):
 	try:
 		paths = body.video_paths if not body.use_training_videos else (store.session.videos or [])
 		job = store.job_runner.start_analyze(paths, body.use_training_videos)
+	except ValueError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	return {"job_id": job.job_id}
+
+
+@app.post("/api/dlc/analyze-partial")
+def analyze_videos_partial(body: AnalyzeBody):
+	try:
+		paths = body.video_paths if not body.use_training_videos else (store.session.videos or [])
+		job = store.job_runner.start_partial_analyze(paths, body.use_training_videos)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	return {"job_id": job.job_id}

@@ -21,6 +21,13 @@ class WorkflowState(str, Enum):
 	review = "review"
 
 
+class AssetPathCheck(BaseModel):
+	"""Filesystem check for a path referenced by the session (computed, not persisted)."""
+	kind: str
+	path: str
+	exists: bool
+
+
 class AppSession(BaseModel):
 	"""Single source of truth for application state."""
 	session_id: str = Field(default_factory=lambda: str(uuid4()))
@@ -45,6 +52,7 @@ class AppSession(BaseModel):
 	training_batch_size: int = 8
 	filter_predictions: bool = False
 	annotate_videos: bool = False
+	asset_path_checks: List[AssetPathCheck] = Field(default_factory=list)
 
 
 class JobStatus(str, Enum):

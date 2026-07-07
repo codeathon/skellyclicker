@@ -33,6 +33,8 @@ class VideoHandler(BaseModel):
     click_handler: ClickHandler
     data_handler: DataHandler
     grid_parameters: GridParameters
+    preview_grid_parameters: GridParameters | None = None
+    preview_scaling_params: list[VideoScalingParameters] | None = None
     image_annotator: ImageAnnotator = ImageAnnotator()
     frame_count: int
     show_machine_labels: bool = False
@@ -56,7 +58,70 @@ class VideoHandler(BaseModel):
         videos, grid_parameters, frame_count = cls._load_videos(
             video_paths, max_window_size
         )
+        return cls._assemble_handler(
+            video_paths=video_paths,
+            videos=videos,
+            grid_parameters=grid_parameters,
+            frame_count=frame_count,
+            data_handler_path=data_handler_path,
+            tracked_point_names=tracked_point_names,
+            machine_labels_path=machine_labels_path,
+        )
 
+    @classmethod
+    def from_videos_for_labeler(
+        cls,
+        video_paths: list[str],
+        data_handler_path: str | None = None,
+        tracked_point_names: list[str] | None = None,
+        machine_labels_path: str | None = None,
+    ):
+        """Web labeler: native-resolution grid for clicks; capped grid for scrub preview."""
+        from skellyclicker import PREVIEW_MAX_WINDOW_SIZE
+
+        video_paths = sorted(video_paths)
+        for path in video_paths:
+            if not Path(path).is_file():
+                raise ValueError(f"File {path} does not exist.")
+
+        videos, frame_count = cls._open_videos(video_paths)
+        grid_parameters = GridParameters.calculate_native(videos)
+        cls._apply_grid_scaling(videos, grid_parameters)
+
+        preview_grid = GridParameters.calculate(videos, PREVIEW_MAX_WINDOW_SIZE)
+        preview_scaling = [
+            cls._calculate_scaling_parameters(
+                video.metadata.width, video.metadata.height, preview_grid.cell_size
+            )
+            for video in videos.values()
+        ]
+
+        return cls._assemble_handler(
+            video_paths=video_paths,
+            videos=videos,
+            grid_parameters=grid_parameters,
+            frame_count=frame_count,
+            data_handler_path=data_handler_path,
+            tracked_point_names=tracked_point_names,
+            machine_labels_path=machine_labels_path,
+            preview_grid=preview_grid,
+            preview_scaling=preview_scaling,
+        )
+
+    @classmethod
+    def _assemble_handler(
+        cls,
+        *,
+        video_paths: list[str],
+        videos: dict[VideoPathString, VideoPlaybackState],
+        grid_parameters: GridParameters,
+        frame_count: int,
+        data_handler_path: str | None,
+        tracked_point_names: list[str] | None,
+        machine_labels_path: str | None,
+        preview_grid: GridParameters | None = None,
+        preview_scaling: list[VideoScalingParameters] | None = None,
+    ) -> "VideoHandler":
         if data_handler_path and Path(data_handler_path).suffix == ".json":
             data_handler = DataHandler.from_config(
                 DataHandlerConfig.from_config_file(
@@ -72,7 +137,6 @@ class VideoHandler(BaseModel):
                 tracked_point_names=tracked_point_names,
             )
         elif tracked_point_names:
-            # Empty click grid from session/DLC bodyparts — no tracked_points.json file.
             data_handler = DataHandler.from_config(
                 DataHandlerConfig(
                     num_frames=frame_count,
@@ -86,7 +150,6 @@ class VideoHandler(BaseModel):
             )
 
         if machine_labels_path:
-            # Defer parsing dense post-analyze CSVs until overlay is actually shown.
             machine_labels_handler = None
             machine_labels_annotator = None
         else:
@@ -104,14 +167,14 @@ class VideoHandler(BaseModel):
             video_folder=str(Path(list(videos.keys())[0]).parent),
             videos=videos,
             click_handler=ClickHandler(
-                output_path=str(
-                    Path(video_paths[0]).parent / "clicks.csv",
-                ),
+                output_path=str(Path(video_paths[0]).parent / "clicks.csv"),
                 grid_helper=grid_parameters,
                 videos=list(videos.values()),
             ),
             data_handler=data_handler,
             grid_parameters=grid_parameters,
+            preview_grid_parameters=preview_grid,
+            preview_scaling_params=preview_scaling,
             frame_count=frame_count,
             image_annotator=image_annotator,
             show_machine_labels=False,
@@ -143,13 +206,12 @@ class VideoHandler(BaseModel):
         )
 
     @classmethod
-    def _load_videos(
-        cls, video_paths: list[str], max_window_size: tuple[int, int]
-    ) -> tuple[dict[VideoPathString, VideoPlaybackState], GridParameters, int]:
-        """Load all videos from the folder and calculate their scaling parameters."""
-
+    def _open_videos(
+        cls, video_paths: list[str]
+    ) -> tuple[dict[VideoPathString, VideoPlaybackState], int]:
+        """Open VideoCapture handles and validate equal frame counts."""
         videos: dict[VideoPathString, VideoPlaybackState] = {}
-        image_counts = set()
+        image_counts: set[int] = set()
 
         for video_path in video_paths:
             video_name = Path(video_path).name
@@ -164,28 +226,40 @@ class VideoHandler(BaseModel):
                 height=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                 frame_count=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
             )
-
             image_counts.add(metadata.frame_count)
-
             videos[video_path] = VideoPlaybackState(
                 metadata=metadata, cap=cap, scaling_params=None
             )
 
-        grid_parameters = GridParameters.calculate(
-            videos=videos, max_window_size=max_window_size
-        )
-
-        for video in videos.values():
-            scaling_params = cls._calculate_scaling_parameters(
-                video.metadata.width, video.metadata.height, grid_parameters.cell_size
-            )
-
-            video.scaling_params = scaling_params
-
         if len(image_counts) > 1:
             raise ValueError("All videos must have the same number of images")
 
-        return videos, grid_parameters, image_counts.pop()
+        return videos, image_counts.pop()
+
+    @classmethod
+    def _apply_grid_scaling(
+        cls,
+        videos: dict[VideoPathString, VideoPlaybackState],
+        grid_parameters: GridParameters,
+    ) -> None:
+        for video in videos.values():
+            video.scaling_params = cls._calculate_scaling_parameters(
+                video.metadata.width,
+                video.metadata.height,
+                grid_parameters.cell_size,
+            )
+
+    @classmethod
+    def _load_videos(
+        cls, video_paths: list[str], max_window_size: tuple[int, int]
+    ) -> tuple[dict[VideoPathString, VideoPlaybackState], GridParameters, int]:
+        """Load videos and fit them into a capped window grid."""
+        videos, frame_count = cls._open_videos(video_paths)
+        grid_parameters = GridParameters.calculate(
+            videos=videos, max_window_size=max_window_size
+        )
+        cls._apply_grid_scaling(videos, grid_parameters)
+        return videos, grid_parameters, frame_count
 
     @staticmethod
     def _calculate_scaling_parameters(
@@ -286,24 +360,39 @@ class VideoHandler(BaseModel):
                     logger.error(f"Error updating data with point name {name}: {e}")
 
     def create_grid_image(
-        self, frame_number: int, annotate_images: bool = True
+        self,
+        frame_number: int,
+        annotate_images: bool = True,
+        *,
+        preview: bool = False,
     ) -> np.ndarray:
         """Create a grid of video images."""
+        use_preview = (
+            preview
+            and self.preview_grid_parameters is not None
+            and self.preview_scaling_params is not None
+        )
+        grid = (
+            self.preview_grid_parameters if use_preview else self.grid_parameters
+        )
         video_states = [deepcopy(video.zoom_state) for video in self.videos.values()]
 
         grid_image = np.zeros(
-            (self.grid_parameters.total_height, self.grid_parameters.total_width, 3),
+            (grid.total_height, grid.total_width, 3),
             dtype=np.uint8,
         )
 
         for video_index, (video, zoom_state) in enumerate(
             zip(self.videos.values(), video_states)
         ):
-            # Calculate grid position
-            row = video_index // self.grid_parameters.columns
-            col = video_index % self.grid_parameters.columns
+            scaling = (
+                self.preview_scaling_params[video_index]
+                if use_preview
+                else video.scaling_params
+            )
+            row = video_index // grid.columns
+            col = video_index % grid.columns
 
-            # Read image
             video.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
             success, image = video.cap.read()
 
@@ -317,7 +406,6 @@ class VideoHandler(BaseModel):
                             video_index=video_index, frame_number=frame_number
                         ),
                     )
-                # Machine overlay is shown during scrub preview (annotate_images=False).
                 if (
                     self.show_machine_labels
                     and self.machine_labels_path
@@ -336,93 +424,40 @@ class VideoHandler(BaseModel):
                     )
 
                 if zoom_state.scale > 1.0:
-                    # Calculate zoomed dimensions
-                    zoomed_width = int(
-                        video.scaling_params.scaled_width * zoom_state.scale
-                    )
-                    zoomed_height = int(
-                        video.scaling_params.scaled_height * zoom_state.scale
-                    )
-
-                    # Resize image to zoomed size
+                    zoomed_width = int(scaling.scaled_width * zoom_state.scale)
+                    zoomed_height = int(scaling.scaled_height * zoom_state.scale)
                     zoomed = cv2.resize(image, (zoomed_width, zoomed_height))
 
-                    # Calculate the relative position within the actual image area
                     relative_x = (
-                        zoom_state.center_x - video.scaling_params.x_offset
-                    ) / video.scaling_params.scaled_width
+                        zoom_state.center_x - scaling.x_offset
+                    ) / scaling.scaled_width
                     relative_y = (
-                        zoom_state.center_y - video.scaling_params.y_offset
-                    ) / video.scaling_params.scaled_height
-                    # # Calculate the center point in the zoomed image
+                        zoom_state.center_y - scaling.y_offset
+                    ) / scaling.scaled_height
                     center_x = int(relative_x * zoomed_width)
                     center_y = int(relative_y * zoomed_height)
 
-                    # center_x = relative_x
-                    # center_y = relative_y
+                    x1 = max(0, center_x - scaling.scaled_width // 2)
+                    y1 = max(0, center_y - scaling.scaled_height // 2)
+                    x2 = min(zoomed_width, x1 + scaling.scaled_width)
+                    y2 = min(zoomed_height, y1 + scaling.scaled_height)
 
-                    # Draw marker at zoom center for debugging
-                    # cv2.drawMarker(
-                    #     zoomed,
-                    #     (center_x, center_y),
-                    #     (0, 0, 255),
-                    #     markerType=cv2.MARKER_CROSS,
-                    #     markerSize=10,
-                    #     thickness=2,
-                    #     line_type=cv2.LINE_AA,
-                    # )
-
-                    # Calculate extraction region centered on this point
-                    x1 = max(0, center_x - video.scaling_params.scaled_width // 2)
-                    y1 = max(0, center_y - video.scaling_params.scaled_height // 2)
-                    x2 = min(zoomed_width, x1 + video.scaling_params.scaled_width)
-                    y2 = min(zoomed_height, y1 + video.scaling_params.scaled_height)
-
-                    adjusted = False
-                    # Adjust x1,y1 if x2,y2 are at their bounds
                     if x2 == zoomed_width:
-                        x1 = zoomed_width - video.scaling_params.scaled_width
-                        adjusted = True
+                        x1 = zoomed_width - scaling.scaled_width
                     if y2 == zoomed_height:
-                        y1 = zoomed_height - video.scaling_params.scaled_height
-                        adjusted = True
+                        y1 = zoomed_height - scaling.scaled_height
 
-                    # Draw marker at adjusted position for debugging
-                    # if adjusted:
-                    #     cv2.drawMarker(
-                    #         zoomed,
-                    #         (x1+20, y1+20),
-                    #         (255, 255, 0),
-                    #         markerType=cv2.MARKER_CROSS,
-                    #         markerSize=10,
-                    #         thickness=2,
-                    #         line_type=cv2.LINE_AA,
-                    #     )
-
-                    # Extract visible region
                     scaled_image = zoomed[y1:y2, x1:x2]
 
                 else:
-                    # Normal scaling without zoom
                     scaled_image = cv2.resize(
                         image,
-                        (
-                            video.scaling_params.scaled_width,
-                            video.scaling_params.scaled_height,
-                        ),
+                        (scaling.scaled_width, scaling.scaled_height),
                     )
 
-                # Calculate position in grid
-                y_start = (
-                    row * self.grid_parameters.cell_height
-                    + video.scaling_params.y_offset
-                )
-                x_start = (
-                    col * self.grid_parameters.cell_width
-                    + video.scaling_params.x_offset
-                )
+                y_start = row * grid.cell_height + scaling.y_offset
+                x_start = col * grid.cell_width + scaling.x_offset
 
-                # Place image in grid
                 try:
                     grid_image[
                         y_start : y_start + scaled_image.shape[0],
@@ -430,6 +465,9 @@ class VideoHandler(BaseModel):
                     ] = scaled_image
                 except ValueError as e:
                     logger.error(f"Error placing image in grid: {e}")
+
+        if use_preview:
+            return grid_image
 
         return self.image_annotator.annotate_image_grid(
             image=grid_image,
@@ -463,6 +501,10 @@ class VideoHandler(BaseModel):
             video.cap.release()
 
         return saved_path
+
+    def save_labels(self, save_path: str | None = None) -> str:
+        """Persist human labels without releasing video captures."""
+        return self._save_data(save_pathstring=save_path)
 
     def _save_data(self, save_pathstring: str | None = None) -> str:
         if save_pathstring is None:

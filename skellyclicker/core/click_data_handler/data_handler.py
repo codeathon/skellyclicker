@@ -296,17 +296,39 @@ class DataHandler(BaseModel):
             (video_name, click_data.frame_number), f"{point_name}_y"
         ] = click_data.y
 
-    def clear_current_point(self, video_index: int, frame_number: int):
+    def clear_point(self, video_index: int, frame_number: int, point_name: str) -> None:
         video_name = self.config.video_names[video_index]
-        self.dataframe.loc[(video_name, frame_number), f"{self.active_point}_x"] = (
-            np.nan
-        )
-        self.dataframe.loc[(video_name, frame_number), f"{self.active_point}_y"] = (
-            np.nan
-        )
+        self.dataframe.loc[(video_name, frame_number), f"{point_name}_x"] = np.nan
+        self.dataframe.loc[(video_name, frame_number), f"{point_name}_y"] = np.nan
         logger.debug(
-            f"Cleared point {self.active_point} for video {video_name}, frame {frame_number}"
+            f"Cleared point {point_name} for video {video_name}, frame {frame_number}"
         )
+
+    def clear_current_point(self, video_index: int, frame_number: int):
+        self.clear_point(video_index, frame_number, self.active_point)
+
+    def get_point_coords(
+        self, video_index: int, frame_number: int, point_name: str
+    ) -> tuple[float | None, float | None]:
+        if not self.point_is_labeled(video_index, frame_number, point_name):
+            return None, None
+        video_name = self.config.video_names[video_index]
+        row = self.dataframe.loc[(video_name, frame_number)]
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        return float(row[f"{point_name}_x"]), float(row[f"{point_name}_y"])
+
+    def set_point_coords(
+        self,
+        video_index: int,
+        frame_number: int,
+        point_name: str,
+        x: float,
+        y: float,
+    ) -> None:
+        video_name = self.config.video_names[video_index]
+        self.dataframe.loc[(video_name, frame_number), f"{point_name}_x"] = x
+        self.dataframe.loc[(video_name, frame_number), f"{point_name}_y"] = y
 
     def get_data_by_video_frame(
         self, video_index: int, frame_number: int
