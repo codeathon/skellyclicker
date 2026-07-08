@@ -660,16 +660,12 @@ export function LabelingCanvas({
 					{hasPredictedNav && (
 						<div className="labeling-frame-nav-legend">
 							<span className="label-legend-key">
-								<span className="label-legend-marker label-legend-marker--human label-legend-marker--sample" />
+								<span className="labeling-frame-nav-swatch labeling-frame-nav-swatch--human" />
 								Human
 							</span>
 							<span className="label-legend-key">
-								<span className="label-legend-marker label-legend-marker--machine label-legend-marker--sample" />
+								<span className="labeling-frame-nav-swatch labeling-frame-nav-swatch--machine" />
 								Predicted
-							</span>
-							<span className="label-legend-key">
-								<span className="labeling-frame-nav-both-swatch" />
-								Both
 							</span>
 						</div>
 					)}

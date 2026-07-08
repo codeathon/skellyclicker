@@ -491,14 +491,20 @@ button:disabled {
   gap: 0.35rem;
 }
 
-.labeling-frame-nav-both-swatch {
+.labeling-frame-nav-swatch {
   flex-shrink: 0;
   width: 1rem;
   height: 1rem;
-  border-left: 3px solid #d4a84b;
-  box-shadow: inset 3px 0 0 0 #5ba4c9;
-  background: #1a2330;
+  border-radius: 3px;
   box-sizing: border-box;
+}
+
+.labeling-frame-nav-swatch--human {
+  background: #d4a84b;
+}
+
+.labeling-frame-nav-swatch--machine {
+  background: #5ba4c9;
 }
 
 .labeling-frame-btn:disabled {
