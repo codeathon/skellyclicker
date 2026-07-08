@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { AppSession, client, LabelingState } from "../api/client";
+import { AppSession, client, LabelingState, NavFrameItem } from "../api/client";
 import { pathDialog } from "../api/pathDialog";
 import { humanLabelsCsvDefaultName, humanLabelsSaveDefaultPath, labelsFileBasename } from "../api/labelsCsvName";
 
@@ -58,6 +58,40 @@ function crosshairCursorCss(color: string): string {
 async function isJpegBlob(blob: Blob): Promise<boolean> {
 	const header = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
 	return header[0] === 0xff && header[1] === 0xd8;
+}
+
+function resolveNavFrames(state: LabelingState): NavFrameItem[] {
+	if (state.nav_frame_list?.length) {
+		return state.nav_frame_list;
+	}
+	return (state.labeled_frame_list ?? []).map((frame) => ({
+		frame,
+		kind: "human" as const,
+	}));
+}
+
+function navFrameCounts(items: NavFrameItem[]): {
+	human: number;
+	machine: number;
+	both: number;
+} {
+	let human = 0;
+	let machine = 0;
+	let both = 0;
+	for (const item of items) {
+		if (item.kind === "human") human += 1;
+		else if (item.kind === "machine") machine += 1;
+		else both += 1;
+	}
+	return { human, machine, both };
+}
+
+function navFrameBtnClass(frame: number, kind: NavFrameItem["kind"], activeFrame: number): string {
+	const classes = ["labeling-frame-btn", `labeling-frame-btn--${kind}`];
+	if (frame === activeFrame) {
+		classes.push("labeling-frame-btn--active");
+	}
+	return classes.join(" ");
 }
 
 export function LabelingCanvas({
@@ -597,6 +631,9 @@ export function LabelingCanvas({
 		labelsFileBasename(labelsPathRef.current ?? humanLabelsPath) ??
 		humanLabelsCsvDefaultName(videoPaths);
 	const machineLabelsName = labelsFileBasename(machineLabelsPath);
+	const navFrames = resolveNavFrames(state);
+	const navCounts = navFrameCounts(navFrames);
+	const hasPredictedNav = navCounts.machine > 0 || navCounts.both > 0;
 
 	return (
 		<div
@@ -614,25 +651,43 @@ export function LabelingCanvas({
 			{saveNotice && <p className="hint save-notice">{saveNotice}</p>}
 			{isClosing && <p className="hint">Saving and closing…</p>}
 			<div className="labeling-body">
-				<aside className="labeling-frame-list" aria-label="Human-labeled frames">
+				<aside className="labeling-frame-list" aria-label="Frame navigation">
 					<h3 className="labeling-hud-title">
-						Labeled frames: {state.labeled_frames}
+						{hasPredictedNav
+							? `Frames: ${navCounts.human + navCounts.both} human · ${navCounts.machine + navCounts.both} predicted`
+							: `Labeled frames: ${state.labeled_frames}`}
 					</h3>
-					{(state.labeled_frame_list ?? []).length > 0 ? (
+					{hasPredictedNav && (
+						<div className="labeling-frame-nav-legend">
+							<span className="label-legend-key">
+								<span className="label-legend-marker label-legend-marker--human label-legend-marker--sample" />
+								Human
+							</span>
+							<span className="label-legend-key">
+								<span className="label-legend-marker label-legend-marker--machine label-legend-marker--sample" />
+								Predicted
+							</span>
+							<span className="label-legend-key">
+								<span className="labeling-frame-nav-both-swatch" />
+								Both
+							</span>
+						</div>
+					)}
+					{navFrames.length > 0 ? (
 						<ul className="labeling-frame-queue">
-							{(state.labeled_frame_list ?? []).map((frame) => (
-								<li key={frame}>
+							{navFrames.map((item) => (
+								<li key={item.frame}>
 									<button
 										type="button"
-										className={
-											frame === state.frame_number
-												? "labeling-frame-btn labeling-frame-btn--active"
-												: "labeling-frame-btn"
-										}
+										className={navFrameBtnClass(
+											item.frame,
+											item.kind,
+											state.frame_number,
+										)}
 										disabled={isClosing}
-										onClick={() => jumpToLabeledFrame(frame)}
+										onClick={() => jumpToLabeledFrame(item.frame)}
 									>
-										Frame {frame + 1}
+										Frame {item.frame + 1}
 									</button>
 								</li>
 							))}

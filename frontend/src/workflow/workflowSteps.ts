@@ -115,7 +115,7 @@ const NEXT_COPY: Record<StepId, { title: string; detail: string }> = {
 	analyze: {
 		title: "Analyze videos",
 		detail:
-			"Train & Analyze (Human Labels) runs training then partial analysis on labeled frames. Use Full Analysis for every frame.",
+			"Train & Analyze (Human Labels) runs training then partial analysis on labeled frames plus a diverse sample (~1%, 50–200 frames). Use Full Analysis for every frame.",
 	},
 	review: {
 		title: "Review predictions",
