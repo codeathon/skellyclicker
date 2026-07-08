@@ -14,6 +14,7 @@ from skellyclicker import (
 from skellyclicker.core.video_handler.image_annotator import get_colors_for_css
 from skellyclicker.core.video_handler.video_handler import VideoHandler
 from skellyclicker.services.label_nav_frames import build_nav_frame_list
+from skellyclicker.services.sample_frames_sidecar import read_sample_frames
 
 
 class LabelingEngine(BaseModel):
@@ -32,6 +33,8 @@ class LabelingEngine(BaseModel):
 	_undo_stack: list[dict[str, Any]] = PrivateAttr(default_factory=list)
 	# Snapshot at frame navigation — machine overlay must not flip us into review mode mid-click.
 	_frame_had_human_on_entry: bool = PrivateAttr(default=False)
+	# Performance-sample frames from the last partial analyze (sidecar), loaded once at open.
+	_sample_frames: list[int] | None = PrivateAttr(default=None)
 
 	@classmethod
 	def open(
@@ -72,6 +75,8 @@ class LabelingEngine(BaseModel):
 		annotator_cfg.show_clicks = False
 		engine.sync_active_point()
 		engine._frame_had_human_on_entry = engine._frame_has_human_labels()
+		if overlay:
+			engine._sample_frames = read_sample_frames(overlay)
 		engine._sync_auto_next_point_for_frame()
 		engine._sync_annotator_overlay_flags()
 		return engine
@@ -277,8 +282,17 @@ class LabelingEngine(BaseModel):
 		active = handler.data_handler.active_point
 		labeled_frame_list = handler.data_handler.get_nonempty_frames()
 		labeled = len(labeled_frame_list)
-		machine_frame_list = self._machine_nonempty_frames()
-		nav_frame_list = build_nav_frame_list(labeled_frame_list, machine_frame_list)
+		# Prefer the explicit sample sidecar; only scan the (possibly dense) machine
+		# CSV for nav when no sidecar exists.
+		if self._sample_frames is not None:
+			machine_frame_list = None
+		else:
+			machine_frame_list = self._machine_nonempty_frames()
+		nav_frame_list = build_nav_frame_list(
+			labeled_frame_list,
+			machine_frame_list,
+			sample_frames=self._sample_frames,
+		)
 		placed_points, available_points = self._frame_label_status()
 		tracked = handler.data_handler.config.tracked_point_names
 		point_colors = {
