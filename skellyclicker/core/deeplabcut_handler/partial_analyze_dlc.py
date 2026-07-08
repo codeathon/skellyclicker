@@ -1,4 +1,4 @@
-"""Run DLC inference on human-labeled frames only and patch machine-labels CSV."""
+"""Run DLC inference on human-labeled frames plus a diverse sample and patch machine-labels CSV."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
+import cv2
 import pandas as pd
 from deeplabcut.compat import _update_device
 from deeplabcut.core.engine import Engine
@@ -15,13 +16,20 @@ from deeplabcut.pose_estimation_pytorch.runners import DynamicCropper
 from deeplabcut.pose_estimation_pytorch.task import Task
 from deeplabcut.utils import auxiliaryfunctions
 
+from skellyclicker import (
+	PERF_SAMPLE_FRACTION,
+	PERF_SAMPLE_MAX_FRAMES,
+	PERF_SAMPLE_MIN_FRAMES,
+)
 from skellyclicker.core.deeplabcut_handler.dlc_csv_io import dlc_predictions_to_skellyclicker
 from skellyclicker.core.deeplabcut_handler.machine_labels_patch import patch_machine_labels_csv
+from skellyclicker.core.deeplabcut_handler.performance_sample import evenly_spread_sample
 from skellyclicker.core.deeplabcut_handler.selected_frames_video_iterator import (
 	SelectedFramesVideoIterator,
 )
 from skellyclicker.services.dlc_paths import resolve_analyze_iteration
 from skellyclicker.services.human_label_frames import human_label_frames_per_video
+from skellyclicker.services.sample_frames_sidecar import write_sample_frames
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +47,18 @@ def _resolve_video_path(video_name: str, video_paths: list[str]) -> str:
 	)
 
 
+def _video_frame_count(video_path: str) -> int:
+	"""Total frames in a video file (same source as VideoHandler)."""
+	cap = cv2.VideoCapture(video_path)
+	if not cap.isOpened():
+		raise FileNotFoundError(f"Could not open video: {video_path}")
+	try:
+		count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+		return max(count, 0)
+	finally:
+		cap.release()
+
+
 def partial_analyze_human_labels(
 	config: str,
 	human_labels_csv: str,
@@ -48,7 +68,7 @@ def partial_analyze_human_labels(
 	batch_size: int = 8,
 	progress_callback: ProgressCallback | None = None,
 ) -> str:
-	"""Infer all human-labeled frames and patch the machine-labels CSV."""
+	"""Infer human-labeled frames plus a diverse sample; patch the machine-labels CSV."""
 	def report(fraction: float | None, message: str) -> None:
 		if progress_callback:
 			progress_callback(fraction, message)
@@ -117,6 +137,9 @@ def partial_analyze_human_labels(
 
 	bodyparts = model_cfg["metadata"]["bodyparts"]
 	patch_parts: list[pd.DataFrame] = []
+	# Sampled (unseen) frames across all videos — recorded so the labeler can show
+	# them even when the machine CSV is dense (seeded from a prior full analysis).
+	all_sample_frames: set[int] = set()
 	video_items = [
 		(name, frames)
 		for name, frames in frames_per_video.items()
@@ -126,15 +149,33 @@ def partial_analyze_human_labels(
 
 	for video_index, (video_name, frame_list) in enumerate(video_items):
 		video_path = _resolve_video_path(video_name, video_paths)
-		n_frames = len(frame_list)
+		labeled = list(frame_list)
+		n_video_frames = _video_frame_count(video_path)
+		sample = evenly_spread_sample(
+			n_video_frames,
+			set(labeled),
+			fraction=PERF_SAMPLE_FRACTION,
+			min_frames=PERF_SAMPLE_MIN_FRAMES,
+			max_frames=PERF_SAMPLE_MAX_FRAMES,
+		)
+		all_sample_frames.update(sample)
+		combined = sorted(set(labeled) | set(sample))
+		n_frames = len(combined)
 		report(
 			0.05 + 0.85 * (video_index / total),
-			f"Partial analyze {video_name}: {n_frames} frame(s)…",
+			f"Partial analyze {video_name}: {len(labeled)} labeled + "
+			f"{len(sample)} sample frame(s)…",
 		)
-		logger.info("Partial analyze %s: frames %s", video_name, frame_list[:10])
+		logger.info(
+			"Partial analyze %s: %d labeled + %d sample (%d total)",
+			video_name,
+			len(labeled),
+			len(sample),
+			n_frames,
+		)
 
 		iterator = SelectedFramesVideoIterator(
-			video_path, frame_list, cropping=cropping
+			video_path, combined, cropping=cropping
 		)
 		predictions = video_inference(
 			video=iterator,
@@ -151,7 +192,7 @@ def partial_analyze_human_labels(
 
 		patch_parts.append(
 			dlc_predictions_to_skellyclicker(
-				predictions, frame_list, video_name, bodyparts
+				predictions, combined, video_name, bodyparts
 			)
 		)
 
@@ -164,5 +205,7 @@ def partial_analyze_human_labels(
 	machine_path.parent.mkdir(parents=True, exist_ok=True)
 	source = machine_path if machine_path.is_file() else machine_path
 	patch_machine_labels_csv(source, combined_patch, output_path=machine_path)
+	# Record sampled frames so the labeler can highlight them regardless of CSV density.
+	write_sample_frames(machine_path, all_sample_frames)
 	report(1.0, f"Partial analysis complete: {machine_path}")
 	return str(machine_path)

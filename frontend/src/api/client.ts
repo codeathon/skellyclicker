@@ -42,6 +42,13 @@ export interface AppSession {
   asset_path_checks: AssetPathCheck[];
 }
 
+export type NavFrameKind = "human" | "machine" | "both";
+
+export interface NavFrameItem {
+  frame: number;
+  kind: NavFrameKind;
+}
+
 export interface LabelingState {
   session_id: string;
   frame_number: number;
@@ -53,6 +60,7 @@ export interface LabelingState {
   available_points: string[];
   labeled_frames: number;
   labeled_frame_list: number[];
+  nav_frame_list?: NavFrameItem[];
   show_machine_labels: boolean;
   show_help: boolean;
   show_names: boolean;

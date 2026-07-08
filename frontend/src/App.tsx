@@ -404,8 +404,9 @@ export default function App() {
                 <h3>Train &amp; Analyze</h3>
                 <p className="hint">
                   Train &amp; Analyze (Human Labels) trains the network, then runs
-                  partial analysis on your labeled frames. Use Full Analysis for every
-                  frame.
+                  partial analysis on your labeled frames plus a diverse sample (~1%,
+                  50–200 frames) for model performance review. Use Full Analysis for
+                  every frame.
                 </p>
                 <DlcSettings session={session} onUpdate={run} />
                 <button
