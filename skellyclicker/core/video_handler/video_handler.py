@@ -272,12 +272,28 @@ class VideoHandler(BaseModel):
             if not cap.isOpened():
                 raise ValueError(f"Could not open video: {video_path}")
 
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            # Some codecs report 0x0 / 0 frames until a frame is read.
+            if width <= 0 or height <= 0 or frame_count <= 0:
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    height, width = frame.shape[:2]
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if frame_count <= 0:
+                        # Fall back to a single known frame rather than crashing later.
+                        frame_count = max(frame_count, 1)
+                else:
+                    raise ValueError(
+                        f"Could not read frames from video (bad metadata): {video_path}"
+                    )
             metadata = VideoMetadata(
                 path=video_path,
                 name=video_name,
-                width=int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                height=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                frame_count=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+                width=width,
+                height=height,
+                frame_count=frame_count,
             )
             image_counts.add(metadata.frame_count)
             videos[video_path] = VideoPlaybackState(
@@ -335,16 +351,21 @@ class VideoHandler(BaseModel):
     ) -> VideoScalingParameters:
         """Calculate scaling parameters for a video to fit in a grid cell."""
         cell_width, cell_height = cell_size
+        # OpenCV sometimes reports 0x0 until a frame is decoded — avoid ZeroDivisionError.
+        safe_w = max(int(orig_width), 1)
+        safe_h = max(int(orig_height), 1)
+        safe_cell_w = max(int(cell_width), 1)
+        safe_cell_h = max(int(cell_height), 1)
 
         # Calculate scale factor preserving aspect ratio
-        scale = min(cell_width / orig_width, cell_height / orig_height)
+        scale = min(safe_cell_w / safe_w, safe_cell_h / safe_h)
 
-        scaled_width = int(orig_width * scale)
-        scaled_height = int(orig_height * scale)
+        scaled_width = max(int(safe_w * scale), 1)
+        scaled_height = max(int(safe_h * scale), 1)
 
         # Calculate offsets to center the video
-        x_offset = (cell_width - scaled_width) // 2
-        y_offset = (cell_height - scaled_height) // 2
+        x_offset = (safe_cell_w - scaled_width) // 2
+        y_offset = (safe_cell_h - scaled_height) // 2
 
         return VideoScalingParameters(
             scale=scale,
@@ -352,8 +373,8 @@ class VideoHandler(BaseModel):
             y_offset=y_offset,
             scaled_width=scaled_width,
             scaled_height=scaled_height,
-            original_width=orig_width,
-            original_height=orig_height,
+            original_width=safe_w,
+            original_height=safe_h,
         )
 
     def prepare_single_image(

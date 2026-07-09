@@ -317,7 +317,8 @@ class SessionStore:
 				from skellyclicker.services.labeling_mode import probe_video_frame_count
 
 				counts = {probe_video_frame_count(p) for p in videos}
-				if len(counts) > 1:
+				# 0 or disagreeing counts → corpus (0 is a common CAP_PROP lie).
+				if 0 in counts or len(counts) > 1:
 					self.session.labeling_mode = LabelingMode.corpus
 					if not self.session.active_video_path:
 						self.session.active_video_path = videos[0]
@@ -336,6 +337,41 @@ class SessionStore:
 		self.session.active_video_path = active
 		return [active]
 
+	def _open_labeling_engine(self, open_paths: list[str]) -> LabelingEngine:
+		"""Construct LabelingEngine for the current session mode/paths."""
+		return LabelingEngine.open(
+			video_paths=open_paths,
+			human_labels_path=self.session.human_labels_path,
+			machine_labels_path=self.session.machine_labels_path,
+			# Web labeler always edits human labels; machine CSV is overlay-only.
+			train_on_machine_labels=False,
+			tracked_point_names=list(self.session.tracked_point_names),
+			labeling_mode=self.session.labeling_mode,
+			session_video_paths=list(self.session.videos or []),
+			active_video_path=self.session.active_video_path,
+		)
+
+	def _open_labeling_engine_as_corpus(self) -> tuple[LabelingEngine, list[str]]:
+		"""Force one-video corpus open after a synced/multi-path failure."""
+		videos = list(self.session.videos or [])
+		active = self.session.active_video_path or videos[0]
+		if active not in videos:
+			active = videos[0]
+		self.session.labeling_mode = LabelingMode.corpus
+		self.session.active_video_path = active
+		open_paths = [active]
+		engine = LabelingEngine.open(
+			video_paths=open_paths,
+			human_labels_path=self.session.human_labels_path,
+			machine_labels_path=self.session.machine_labels_path,
+			train_on_machine_labels=False,
+			tracked_point_names=list(self.session.tracked_point_names),
+			labeling_mode=LabelingMode.corpus,
+			session_video_paths=videos,
+			active_video_path=active,
+		)
+		return engine, open_paths
+
 	def open_labeler(self) -> AppSession:
 		self._assert_no_active_job()
 		if not self.session.videos:
@@ -350,42 +386,21 @@ class SessionStore:
 		# Best-effort warm model for on-the-fly scrub predictions (corpus/single).
 		self._ensure_live_inference()
 		try:
-			engine = LabelingEngine.open(
-				video_paths=open_paths,
-				human_labels_path=self.session.human_labels_path,
-				machine_labels_path=self.session.machine_labels_path,
-				# Web labeler always edits human labels; machine CSV is overlay-only.
-				train_on_machine_labels=False,
-				tracked_point_names=list(self.session.tracked_point_names),
-				labeling_mode=self.session.labeling_mode,
-				session_video_paths=list(self.session.videos),
-				active_video_path=self.session.active_video_path,
-			)
-		except ValueError as exc:
-			# e.g. synced open of unequal-length videos — fall back to corpus once.
+			engine = self._open_labeling_engine(open_paths)
+		except Exception as exc:
+			# Never leave the UI with an unhandled 500 for multi-video opens.
+			# Synced mis-detect (lying CAP_PROP / mixed folders) is the usual cause.
 			msg = str(exc)
-			if (
-				"same number of images" in msg
-				and len(self.session.videos or []) > 1
-				and self.session.labeling_mode == LabelingMode.synced
-			):
-				self.session.labeling_mode = LabelingMode.corpus
-				self.session.active_video_path = (self.session.videos or [])[0]
-				open_paths = [self.session.active_video_path]
-				engine = LabelingEngine.open(
-					video_paths=open_paths,
-					human_labels_path=self.session.human_labels_path,
-					machine_labels_path=self.session.machine_labels_path,
-					train_on_machine_labels=False,
-					tracked_point_names=list(self.session.tracked_point_names),
-					labeling_mode=LabelingMode.corpus,
-					session_video_paths=list(self.session.videos),
-					active_video_path=self.session.active_video_path,
-				)
+			can_fallback = len(self.session.videos or []) > 1 and len(open_paths) > 1
+			if can_fallback:
+				try:
+					engine, open_paths = self._open_labeling_engine_as_corpus()
+				except Exception as fallback_exc:
+					raise SessionError(
+						f"Could not open labeler: {fallback_exc}"
+					) from fallback_exc
 			else:
-				raise SessionError(msg) from exc
-		except OSError as exc:
-			raise SessionError(f"Could not open labeler: {exc}") from exc
+				raise SessionError(f"Could not open labeler: {msg}") from exc
 		if self.live_inference is not None and self.live_inference.ready:
 			engine.attach_live_inference(self.live_inference)
 		self.labeling_engine = engine
@@ -411,7 +426,7 @@ class SessionStore:
 			)
 		else:
 			self.session.status_message = f"Labeling{live_note}"
-		return self.session
+		return self._finalize_session()
 
 	def set_active_labeling_video(self, video_path: str) -> AppSession:
 		"""Switch the corpus/single labeler to another session video (merge-save first)."""

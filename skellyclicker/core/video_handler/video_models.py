@@ -107,11 +107,14 @@ class GridParameters(BaseModel):
         videos: dict[VideoPathString, VideoPlaybackState],
     ) -> tuple[int, int, float]:
         """Shared row/column layout from video count and mean aspect ratio."""
-        mean_width = sum(video.metadata.width for video in videos.values()) / len(videos)
-        mean_height = sum(video.metadata.height for video in videos.values()) / len(videos)
+        # CAP_PROP can report 0x0 before the first decode — never divide by zero.
+        widths = [max(video.metadata.width, 1) for video in videos.values()]
+        heights = [max(video.metadata.height, 1) for video in videos.values()]
+        mean_width = sum(widths) / len(videos)
+        mean_height = sum(heights) / len(videos)
         mean_aspect_ratio = mean_width / mean_height
 
-        num_rows = round(math.sqrt(len(videos) * mean_aspect_ratio))
+        num_rows = max(1, round(math.sqrt(len(videos) * mean_aspect_ratio)))
         num_columns = math.ceil(len(videos) / num_rows)
 
         while num_rows * num_columns < len(videos):
@@ -144,8 +147,9 @@ class GridParameters(BaseModel):
     ) -> "GridParameters":
         """Grid sized for native video resolution (largest camera sets cell size)."""
         num_rows, num_columns, _ = cls._compute_layout(videos)
-        cell_width = max(video.metadata.width for video in videos.values())
-        cell_height = max(video.metadata.height for video in videos.values())
+        # Floor at 1px so a 0x0 CAP_PROP lie cannot build an empty grid.
+        cell_width = max(max(video.metadata.width for video in videos.values()), 1)
+        cell_height = max(max(video.metadata.height for video in videos.values()), 1)
         return cls(
             rows=num_rows,
             columns=num_columns,

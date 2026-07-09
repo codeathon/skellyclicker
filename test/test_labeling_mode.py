@@ -20,6 +20,24 @@ def test_detect_synced_equal_frame_counts():
 		assert detect_labeling_mode(["/a/cam0.mp4", "/a/cam1.mp4"]) == LabelingMode.synced
 
 
+def test_detect_corpus_when_frame_count_is_zero():
+	"""CAP_PROP 0 is unreliable — must not open as synced multi-cam."""
+	with patch("skellyclicker.services.labeling_mode.probe_video_frame_count", return_value=0):
+		assert detect_labeling_mode(["/a/cam0.mp4", "/a/cam1.mp4"]) == LabelingMode.corpus
+
+
+def test_detect_corpus_different_parent_folders(tmp_path: Path):
+	"""Videos from different experiment folders are corpus even if lengths match."""
+	a = tmp_path / "expA" / "cam.mp4"
+	b = tmp_path / "expB" / "cam.mp4"
+	a.parent.mkdir()
+	b.parent.mkdir()
+	a.write_bytes(b"x")
+	b.write_bytes(b"x")
+	with patch("skellyclicker.services.labeling_mode.probe_video_frame_count", return_value=100):
+		assert detect_labeling_mode([str(a), str(b)]) == LabelingMode.corpus
+
+
 def test_detect_corpus_unequal_frame_counts():
 	counts = {"/a/expA.mp4": 100, "/b/expB.mp4": 250}
 

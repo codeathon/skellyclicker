@@ -41,6 +41,23 @@ async def session_error_handler(_request, exc: SessionError):
 	return JSONResponse(status_code=status, content={"detail": exc.message})
 
 
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request, exc: Exception):
+	"""Surface unexpected errors as JSON detail instead of a bare Internal Server Error."""
+	# HTTPException subclasses Exception — re-emit as a normal HTTP response.
+	from starlette.exceptions import HTTPException as StarletteHTTPException
+
+	if isinstance(exc, StarletteHTTPException):
+		return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+	logging.getLogger("skellyclicker.api").exception(
+		"Unhandled API error on %s", request.url.path
+	)
+	return JSONResponse(
+		status_code=500,
+		content={"detail": f"{type(exc).__name__}: {exc}"},
+	)
+
+
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],
