@@ -360,16 +360,18 @@ class LabelingEngine(BaseModel):
 		sample_for_nav = sample_frames_for_video(
 			self._sample_frames_by_video, nav_video
 		)
-		# Prefer the explicit sample sidecar; only scan the (possibly dense) machine
-		# CSV for nav when no sidecar exists.
-		if sample_for_nav is not None:
+		# Predicted frames must be tied to the active video — never a cross-video union.
+		# Non-empty per-video samples win; otherwise use this video's machine CSV rows.
+		if sample_for_nav:
 			machine_frame_list = None
+			sample_frames = sample_for_nav
 		else:
 			machine_frame_list = self._machine_nonempty_frames(nav_video)
+			sample_frames = None
 		nav_frame_list = build_nav_frame_list(
 			labeled_frame_list,
 			machine_frame_list,
-			sample_frames=sample_for_nav,
+			sample_frames=sample_frames,
 		)
 		placed_points, available_points = self._frame_label_status()
 		tracked = handler.data_handler.config.tracked_point_names

@@ -94,15 +94,29 @@ def sample_frames_for_video(
 	by_video: dict[str, list[int]] | None,
 	video_name: str | None,
 ) -> list[int] | None:
-	"""Pick sample frames for one video basename; legacy flat list applies to all."""
+	"""Pick sample frames for one video basename.
+
+	Returns:
+	- list for a known per-video entry (possibly empty)
+	- None when there is no usable per-video sample set (caller should fall
+	  back to machine-CSV frames for that video, or show human-only nav)
+
+	Legacy flat sidecars (empty-string key) must NOT be broadcast to every
+	corpus video — that made predicted frames look "common" across experiments.
+	"""
 	if by_video is None:
 		return None
-	if video_name and video_name in by_video:
-		return by_video[video_name]
-	# Legacy sidecar: only the empty-key union exists.
-	if "" in by_video and len(by_video) == 1:
-		return by_video[""]
 	if video_name:
-		return []
-	# No active video (synced grid): show union of all videos' samples.
+		# Normalize basename so path-like keys still match session video names.
+		name = Path(video_name).name
+		if name in by_video:
+			return by_video[name]
+		if video_name in by_video:
+			return by_video[video_name]
+		# Per-video sidecar exists but not for this clip → no predicted samples.
+		if any(k for k in by_video if k != ""):
+			return []
+		# Legacy flat-only sidecar: refuse to apply the union to one video.
+		return None
+	# Synced grid / no active video: union of all known samples (incl. legacy flat).
 	return sorted({f for idxs in by_video.values() for f in idxs})
