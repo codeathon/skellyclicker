@@ -116,6 +116,12 @@ class LiveInferenceService:
 			raise FileNotFoundError(
 				f"PyTorch model config not found: {model_cfg_path}. Train the network first."
 			)
+		# create_training_dataset writes the config before any weights exist.
+		if not any(train_folder.glob("*.pt")):
+			raise FileNotFoundError(
+				f"No trained snapshot (*.pt) in {train_folder}. "
+				"Train the network before live machine labels."
+			)
 
 		model_cfg = auxiliaryfunctions.read_plainconfig(model_cfg_path)
 		pose_task = Task(model_cfg["method"])
@@ -127,7 +133,12 @@ class LiveInferenceService:
 		if pose_task != Task.BOTTOM_UP:
 			dynamic = None
 
-		snapshot = utils.get_model_snapshots(snapshot_index, train_folder, pose_task)[0]
+		snapshots = utils.get_model_snapshots(snapshot_index, train_folder, pose_task)
+		if not snapshots:
+			raise FileNotFoundError(
+				f"No pose snapshots in {train_folder}. Train the network first."
+			)
+		snapshot = snapshots[0]
 		# batch_size=1 for interactive single-frame scrub.
 		pose_runner = utils.get_pose_inference_runner(
 			model_config=model_cfg,

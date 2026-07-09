@@ -25,16 +25,27 @@ PYTORCH_MODELS_DIR = "dlc-models-pytorch"
 PYTORCH_TRAIN_CONFIG = "pytorch_config.yaml"
 
 
+def _train_folder_has_snapshot(train_folder: Path) -> bool:
+	"""True when train/ has at least one pose/detector weight file (not just config)."""
+	# create_training_dataset writes pytorch_config.yaml before any training;
+	# live overlays / analyze need an actual snapshot-*.pt from train_network.
+	return any(train_folder.glob("*.pt"))
+
+
 def iteration_has_pytorch_model(project_dir: Path, iteration: int) -> bool:
-	"""True if iteration-N contains a shuffle folder with train/pytorch_config.yaml."""
+	"""True if iteration-N has a shuffle with pytorch_config.yaml and trained .pt weights."""
 	iter_root = project_dir / PYTORCH_MODELS_DIR / f"iteration-{iteration}"
 	if not iter_root.is_dir():
 		return False
-	return any(
-		(shuffle_dir / "train" / PYTORCH_TRAIN_CONFIG).is_file()
-		for shuffle_dir in iter_root.iterdir()
-		if shuffle_dir.is_dir()
-	)
+	for shuffle_dir in iter_root.iterdir():
+		if not shuffle_dir.is_dir():
+			continue
+		train_folder = shuffle_dir / "train"
+		if (train_folder / PYTORCH_TRAIN_CONFIG).is_file() and _train_folder_has_snapshot(
+			train_folder
+		):
+			return True
+	return False
 
 
 def latest_iteration_with_pytorch_model(project_dir: Path) -> int | None:

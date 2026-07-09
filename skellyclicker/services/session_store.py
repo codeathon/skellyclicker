@@ -38,19 +38,32 @@ class SessionStore:
 		return self._finalize_session()
 
 	def _sync_machine_labels_path_to_latest(self) -> None:
-		"""Point session at the newest skellyclicker machine-labels CSV on disk."""
+		"""Point session at the newest machine-labels CSV under the loaded DLC project.
+
+		Search the project tree only — never video-folder leftovers from a previous
+		project on the same videos (those can show the wrong bodypart count).
+		"""
 		if not self.session.dlc_project_path:
 			return
 		try:
-			_, config_path = resolve_dlc_project_input(self.session.dlc_project_path)
+			project_dir, config_path = resolve_dlc_project_input(
+				self.session.dlc_project_path
+			)
 		except ValueError:
 			return
-		latest = resolve_latest_machine_labels_path(
-			str(config_path),
-			video_paths=self.session.videos,
-		)
+		# video_paths=None: do not pick up *_model_outputs next to videos.
+		latest = resolve_latest_machine_labels_path(str(config_path), video_paths=None)
 		if latest is not None:
 			self.session.machine_labels_path = str(latest)
+			return
+		# No project-local CSV: drop a stale path that lives outside this project.
+		current = self.session.machine_labels_path
+		if not current:
+			return
+		try:
+			Path(current).expanduser().resolve().relative_to(project_dir.resolve())
+		except (ValueError, OSError):
+			self.session.machine_labels_path = None
 
 	def _finalize_session(self) -> AppSession:
 		"""Attach fresh path checks and derived workflow state before API responses."""
@@ -81,21 +94,44 @@ class SessionStore:
 			self.live_inference = None
 		self._bump_generation()
 
+	def _close_live_inference(self) -> None:
+		"""Drop warm runners (e.g. when switching to an untrained / new project)."""
+		if self.live_inference is not None:
+			close = getattr(self.live_inference, "close", None)
+			if callable(close):
+				close()
+			self.live_inference = None
+		if self.labeling_engine is not None:
+			self.labeling_engine.attach_live_inference(None)
+
 	def _ensure_live_inference(self) -> None:
-		"""Load warm runners when a trained DLC project is available (best-effort)."""
+		"""Load warm runners only when the project has trained .pt snapshots."""
 		if not self.dlc_handler:
+			self._close_live_inference()
 			return
 		config_path = getattr(self.dlc_handler, "project_config_path", None)
 		if not config_path:
+			self._close_live_inference()
 			return
+		from skellyclicker.services.dlc_paths import (
+			dlc_project_dir,
+			latest_iteration_with_pytorch_model,
+		)
 		from skellyclicker.services.live_inference import LiveInferenceService
+
+		project_dir = dlc_project_dir(str(config_path))
+		# Require real weights — pytorch_config alone exists before train_network.
+		if latest_iteration_with_pytorch_model(project_dir) is None:
+			self._close_live_inference()
+			return
 
 		if self.live_inference is None:
 			self.live_inference = LiveInferenceService()
 		try:
 			self.live_inference.load(str(config_path))
 		except Exception as exc:
-			# Labeler still works with CSV overlays; live scrub is optional.
+			# Labeler still works without live scrub; clear so overlays stay off.
+			self._close_live_inference()
 			self.session.status_message = f"Live machine labels unavailable: {exc}"
 
 
@@ -449,7 +485,7 @@ class SessionStore:
 		self._sync_dlc_iteration_from_handler()
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
-		# Warm live runners in the background of the request (may take a few seconds).
+		# Warm live runners only if this project has trained weights; else clear.
 		self._ensure_live_inference()
 		return self._finalize_session()
 

@@ -182,11 +182,10 @@ class DataHandler(BaseModel):
         sparse = raw.set_index(["video", "frame"])
         sparse = sparse[~sparse.index.duplicated(keep="first")]
 
+        # Overlay must follow the active DLC/session bodyparts — never grow the
+        # set from a stale CSV (e.g. 6-part leftover next to videos).
         if tracked_point_names:
             names = list(tracked_point_names)
-            for bp in csv_bodyparts:
-                if bp not in names:
-                    names.append(bp)
         else:
             names = csv_bodyparts
 

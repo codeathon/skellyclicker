@@ -220,6 +220,9 @@ class VideoHandler(BaseModel):
         """CSV machine labels for this frame, else display-only live cache (never saved)."""
         from skellyclicker.core.video_handler.video_models import ClickData
 
+        # Only draw bodyparts from the active session/DLC project.
+        allowed = set(self.data_handler.config.tracked_point_names)
+
         if self.machine_labels_path:
             self.ensure_machine_labels_loaded()
         if self.machine_labels_handler is not None:
@@ -227,7 +230,7 @@ class VideoHandler(BaseModel):
                 video_index=video_index, frame_number=frame_number
             )
             if csv_data:
-                return csv_data
+                return {k: v for k, v in csv_data.items() if k in allowed}
         # Preview-only live predictions — in-memory cache, not the machine CSV.
         lookup = self.live_points_lookup
         if lookup is None:
@@ -246,6 +249,7 @@ class VideoHandler(BaseModel):
                 window_y=int(y),
             )
             for name, (x, y) in points.items()
+            if name in allowed
         }
 
     @classmethod
