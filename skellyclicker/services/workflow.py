@@ -43,8 +43,7 @@ def _has_dlc(session: AppSession) -> bool:
 
 
 def _labels_for_train(session: AppSession) -> str | None:
-	if session.train_on_machine_labels:
-		return session.machine_labels_path
+	# Training always requires human labels (machine CSV is overlay / full analyze only).
 	return session.human_labels_path
 
 
@@ -60,10 +59,7 @@ def build_workflow_hints(session: AppSession) -> dict:
 		missing_train.append("Add videos")
 		missing_analyze.append("Add videos")
 	if not _labels_for_train(session):
-		if session.train_on_machine_labels:
-			missing_train.append("Import or generate machine labels before training")
-		else:
-			missing_train.append("Label videos or import human labels before training")
+		missing_train.append("Label videos or import human labels before training")
 	if session.dlc_iteration is None:
 		missing_analyze.append("Train the network before analyzing")
 

@@ -224,3 +224,45 @@ def test_finalize_session_points_machine_labels_at_latest_csv(fresh_store, tmp_p
 	fresh_store.session.machine_labels_path = str(old_csv)
 	session = fresh_store.get_session()
 	assert session.machine_labels_path == str(new_csv.resolve())
+
+
+def test_finalize_clears_stale_video_folder_machine_labels(fresh_store, tmp_path):
+	"""New/unanalyzed project must not keep a CSV from beside the videos."""
+	project = tmp_path / "new_proj"
+	project.mkdir()
+	(project / "config.yaml").write_text("Task: new\niteration: 0\n")
+	stale = (
+		tmp_path
+		/ "videos"
+		/ "old_model_outputs_iteration_0"
+		/ "skellyclicker_machine_labels_iteration_0.csv"
+	)
+	stale.parent.mkdir(parents=True)
+	stale.write_text("video,frame,a_x,a_y,b_x,b_y,c_x,c_y,d_x,d_y,e_x,e_y,f_x,f_y\n")
+
+	fresh_store.session.dlc_project_path = str(project)
+	fresh_store.session.videos = [str(tmp_path / "videos" / "cam.mp4")]
+	fresh_store.session.machine_labels_path = str(stale)
+	session = fresh_store.get_session()
+	assert session.machine_labels_path is None
+
+
+def test_ensure_live_inference_skips_without_trained_weights(fresh_store, tmp_path):
+	"""Live overlays stay off until a .pt snapshot exists under dlc-models-pytorch."""
+	from skellyclicker.services.dlc_paths import PYTORCH_MODELS_DIR, PYTORCH_TRAIN_CONFIG
+
+	project = tmp_path / "proj"
+	config = project / "config.yaml"
+	config.parent.mkdir(parents=True)
+	config.write_text("Task: t\niteration: 0\n")
+	train = project / PYTORCH_MODELS_DIR / "iteration-0" / "shuffle1" / "train"
+	train.mkdir(parents=True)
+	(train / PYTORCH_TRAIN_CONFIG).write_text("method: bu\n")
+
+	class _FakeDlc:
+		project_config_path = str(config)
+
+	fresh_store.dlc_handler = _FakeDlc()  # type: ignore[assignment]
+	fresh_store.live_inference = object()  # type: ignore[assignment]
+	fresh_store._ensure_live_inference()
+	assert fresh_store.live_inference is None

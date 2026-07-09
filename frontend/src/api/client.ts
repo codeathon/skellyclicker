@@ -74,6 +74,7 @@ export interface LabelingState {
   show_help: boolean;
   show_names: boolean;
   has_machine_labels: boolean;
+  live_inference_ready?: boolean;
   auto_next_point: boolean;
   grid_width: number;
   grid_height: number;
@@ -169,11 +170,6 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  setTrainOnMachine: (enabled: boolean) =>
-    api<AppSession>("/api/labels/train-on-machine", {
-      method: "POST",
-      body: JSON.stringify({ enabled }),
-    }),
   setTrainingSettings: (settings: {
     epochs?: number;
     save_epochs?: number;
@@ -248,11 +244,6 @@ export const client = {
   train: () => api<{ job_id: string }>("/api/dlc/train", { method: "POST" }),
   analyze: (video_paths: string[], use_training_videos: boolean) =>
     api<{ job_id: string }>("/api/dlc/analyze", {
-      method: "POST",
-      body: JSON.stringify({ video_paths, use_training_videos }),
-    }),
-  analyzePartial: (video_paths: string[], use_training_videos: boolean) =>
-    api<{ job_id: string }>("/api/dlc/analyze-partial", {
       method: "POST",
       body: JSON.stringify({ video_paths, use_training_videos }),
     }),

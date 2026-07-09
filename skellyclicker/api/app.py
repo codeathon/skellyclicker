@@ -313,6 +313,10 @@ def create_dlc(body: CreateProjectBody) -> AppSession:
 	store.session.dlc_project_path = full_path
 	store.session.dlc_iteration = handler.iteration
 	store.session.tracked_point_names = bodyparts
+	# New project has no trained weights and no project-local machine CSV —
+	# drop leftover live runners / video-folder CSVs from a prior project.
+	store._close_live_inference()
+	store.session.machine_labels_path = None
 	store.session.workflow_state = WorkflowState.ready_to_train
 	return store.get_session()
 

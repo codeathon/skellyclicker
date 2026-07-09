@@ -70,7 +70,7 @@ Confirm the right interpreter: `which python` should point inside your conda env
     python -m skellyclicker.api
     ```
 
-4. Follow the workflow: **Videos → DeepLabCut → Labels → Train & Analyze → Session**.
+4. Follow the workflow: **Videos → DeepLabCut → Labels → Train Network / Full Analysis → Session**.
 
    File pickers use native Ubuntu dialogs via zenity (or the browser file picker as fallback).
    If dialogs are unavailable at startup, the server logs a warning.

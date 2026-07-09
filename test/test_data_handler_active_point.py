@@ -118,3 +118,22 @@ def test_from_csv_overlay_remaps_session_video_names(tmp_path):
 		tracked_point_names=["nose"],
 	)
 	assert handler.get_data_by_video_frame(0, 3)["nose"].video_x == 11
+
+
+def test_from_csv_overlay_keeps_session_bodyparts_only(tmp_path):
+	"""Stale 6-part machine CSV must not expand a 3-part DLC project overlay."""
+	csv_path = tmp_path / "machine.csv"
+	csv_path.write_text(
+		"video,frame,"
+		"a_x,a_y,b_x,b_y,c_x,c_y,d_x,d_y,e_x,e_y,f_x,f_y\n"
+		"cam0.mp4,0,1,2,3,4,5,6,7,8,9,10,11,12\n"
+	)
+	handler = DataHandler.from_csv_overlay(
+		csv_path,
+		video_names=["cam0.mp4"],
+		num_frames=10,
+		tracked_point_names=["a", "b", "c"],
+	)
+	assert handler.config.tracked_point_names == ["a", "b", "c"]
+	data = handler.get_data_by_video_frame(0, 0)
+	assert set(data) == {"a", "b", "c"}

@@ -188,3 +188,44 @@ def test_resolve_latest_machine_labels_path(tmp_path):
 	csv.parent.mkdir(parents=True)
 	csv.write_text("video,frame,x,y\n")
 	assert resolve_latest_machine_labels_path(str(config)) == csv.resolve()
+
+
+def test_iteration_has_pytorch_model_requires_snapshot_weights(tmp_path):
+	from skellyclicker.services.dlc_paths import (
+		PYTORCH_MODELS_DIR,
+		PYTORCH_TRAIN_CONFIG,
+		iteration_has_pytorch_model,
+	)
+
+	project = tmp_path / "proj"
+	# Shuffle folder name matches DLC layout; only config is not "trained".
+	shuffle = project / PYTORCH_MODELS_DIR / "iteration-0" / "shuffle1"
+	train = shuffle / "train"
+	train.mkdir(parents=True)
+	(train / PYTORCH_TRAIN_CONFIG).write_text("method: bu\n")
+	assert iteration_has_pytorch_model(project, 0) is False
+	(train / "snapshot-100.pt").write_bytes(b"fake")
+	assert iteration_has_pytorch_model(project, 0) is True
+
+
+def test_resolve_latest_ignores_video_folder_csvs_when_video_paths_none(tmp_path):
+	"""Project-only sync must not pick up leftover CSVs beside videos."""
+	project = tmp_path / "proj"
+	project.mkdir()
+	config = project / "config.yaml"
+	config.write_text("Task: test\niteration: 0\n")
+	videos = tmp_path / "videos"
+	videos.mkdir()
+	stale = (
+		videos
+		/ "old_model_outputs_iteration_0"
+		/ "skellyclicker_machine_labels_iteration_0.csv"
+	)
+	stale.parent.mkdir(parents=True)
+	stale.write_text("video,frame,nose_x,nose_y\n")
+	assert resolve_latest_machine_labels_path(str(config), video_paths=None) is None
+	# Explicit video_paths still finds them (analyze / partial patch paths).
+	assert (
+		resolve_latest_machine_labels_path(str(config), video_paths=[str(videos / "a.mp4")])
+		== stale.resolve()
+	)

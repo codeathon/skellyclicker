@@ -17,10 +17,7 @@ from skellyclicker.core.video_handler.video_handler import VideoHandler
 from skellyclicker.services.human_labels_merge import merge_human_label_rows
 from skellyclicker.services.label_nav_frames import build_nav_frame_list
 from skellyclicker.services.models import LabelingMode
-from skellyclicker.services.sample_frames_sidecar import (
-	read_sample_frames_by_video,
-	sample_frames_for_video,
-)
+from skellyclicker.services.live_inference import LiveInferenceService
 
 
 class LabelingEngine(BaseModel):
@@ -47,8 +44,8 @@ class LabelingEngine(BaseModel):
 	_undo_stack: list[dict[str, Any]] = PrivateAttr(default_factory=list)
 	# Snapshot at frame navigation — machine overlay must not flip us into review mode mid-click.
 	_frame_had_human_on_entry: bool = PrivateAttr(default=False)
-	# Performance-sample frames per video from the last partial analyze (sidecar).
-	_sample_frames_by_video: dict[str, list[int]] | None = PrivateAttr(default=None)
+	# Optional warm DLC runners for scrub-time predictions (corpus/single).
+	_live_inference: Any | None = PrivateAttr(default=None)
 
 	@classmethod
 	def open(
@@ -103,8 +100,6 @@ class LabelingEngine(BaseModel):
 		annotator_cfg.show_clicks = False
 		engine.sync_active_point()
 		engine._frame_had_human_on_entry = engine._frame_has_human_labels()
-		if overlay:
-			engine._sample_frames_by_video = read_sample_frames_by_video(overlay)
 		engine._sync_auto_next_point_for_frame()
 		engine._sync_annotator_overlay_flags()
 		return engine
@@ -116,6 +111,9 @@ class LabelingEngine(BaseModel):
 		self._sync_auto_next_point_for_frame()
 		if self.auto_next_point:
 			self.video_handler.data_handler.reset_active_point_for_frame(frame_number)
+		# Prefetch display-only live prediction so the stopped scrub frame can
+		# guide human labeling (live overlay is never saved).
+		self._maybe_request_live_infer(frame_number)
 
 	def _frame_has_human_labels(self) -> bool:
 		"""True when any human label exists on this frame (any camera)."""
@@ -205,6 +203,59 @@ class LabelingEngine(BaseModel):
 		self.show_names = not self.show_names
 		self._sync_annotator_overlay_flags()
 
+	def attach_live_inference(self, service: LiveInferenceService | None) -> None:
+		"""Wire session-scoped warm runners for display-only scrub overlays (never saved)."""
+		self._live_inference = service
+		if service is None:
+			self.video_handler.live_points_lookup = None
+			return
+		# Sticky-aware lookup for scrub; exact frame when sticky is off.
+		self.video_handler.live_points_lookup = service.get_overlay_points
+
+	def _live_infer_video_path(self) -> str | None:
+		"""Active video path for live scrub infer (corpus/single)."""
+		if self.labeling_mode == LabelingMode.synced:
+			return None
+		if self.active_video_path:
+			return self.active_video_path
+		paths = list(self.video_handler.videos.keys())
+		return paths[0] if paths else None
+
+	def _maybe_request_live_infer(self, frame_number: int) -> None:
+		"""Kick coalesced background infer for the active video when CSV has no row."""
+		service = self._live_inference
+		if service is None or not service.ready:
+			return
+		video_path = self._live_infer_video_path()
+		if not video_path:
+			return
+		video_name = Path(video_path).name
+		if service.get_cached(video_name, frame_number) is not None:
+			return
+		# If saved machine CSV already has this frame, skip live infer.
+		self.video_handler.ensure_machine_labels_loaded()
+		mlh = self.video_handler.machine_labels_handler
+		if mlh is not None and mlh.get_data_by_video_frame(0, frame_number):
+			return
+		service.request_infer(video_path, frame_number)
+
+	def _wait_briefly_for_live_cache(self, frame_number: int, *, timeout_s: float = 0.18) -> None:
+		"""On committed frames, wait briefly so the first paint can include live crosses."""
+		import time
+
+		service = self._live_inference
+		video_path = self._live_infer_video_path()
+		if service is None or not service.ready or not video_path:
+			return
+		video_name = Path(video_path).name
+		if service.get_cached(video_name, frame_number) is not None:
+			return
+		deadline = time.monotonic() + timeout_s
+		while time.monotonic() < deadline:
+			if service.get_cached(video_name, frame_number) is not None:
+				return
+			time.sleep(0.01)
+
 	def render_frame_jpeg(
 		self,
 		frame_number: int | None = None,
@@ -223,16 +274,32 @@ class LabelingEngine(BaseModel):
 			prev_show = self.video_handler.show_machine_labels
 			prev_help = self.video_handler.image_annotator.config.show_help
 			prev_names = self.video_handler.image_annotator.config.show_names
+			prev_sticky = self.video_handler.live_overlay_sticky
 			try:
+				live = self._live_inference
+				has_csv = bool(self.video_handler.machine_labels_path)
+				has_live = bool(live and live.ready)
 				if preview:
-					# Scrub preview: show machine predictions when available, skip human overlays.
-					self.video_handler.show_machine_labels = bool(
-						self.video_handler.machine_labels_path
-					)
-					if self.video_handler.show_machine_labels:
+					# Scrub: sticky last/nearby live points so crosses stay visible
+					# while coalesced infer lags behind a fast drag.
+					self.video_handler.show_machine_labels = has_csv or has_live
+					self.video_handler.live_overlay_sticky = has_live
+					if has_csv:
 						self.video_handler.ensure_machine_labels_loaded()
+					if has_live:
+						self._maybe_request_live_infer(render_at)
 				else:
-					self.video_handler.show_machine_labels = self.show_machine_labels
+					# Stopped/committed frame: prefer exact-frame cache (not sticky).
+					self.video_handler.live_overlay_sticky = False
+					self.video_handler.show_machine_labels = (
+						self.show_machine_labels or has_live
+					)
+					if has_csv and self.show_machine_labels:
+						self.video_handler.ensure_machine_labels_loaded()
+					if has_live:
+						self._maybe_request_live_infer(render_at)
+						# Brief wait so release-scrub paint often includes the guide.
+						self._wait_briefly_for_live_cache(render_at)
 				self._sync_annotator_overlay_flags()
 				image = self.video_handler.create_grid_image(
 					render_at,
@@ -240,8 +307,9 @@ class LabelingEngine(BaseModel):
 					preview=preview,
 				)
 			finally:
-				if preview:
-					self.video_handler.show_machine_labels = prev_show
+				# Always restore — live preview must not leave overlay permanently on.
+				self.video_handler.show_machine_labels = prev_show
+				self.video_handler.live_overlay_sticky = prev_sticky
 				self.video_handler.image_annotator.config.show_help = prev_help
 				self.video_handler.image_annotator.config.show_names = prev_names
 				if self.video_handler.machine_labels_annotator is not None:
@@ -339,17 +407,6 @@ class LabelingEngine(BaseModel):
 		names = self.video_handler.data_handler.config.video_names
 		return names[0] if names else None
 
-	def _machine_nonempty_frames(self, video_name: str | None = None) -> list[int] | None:
-		"""Frame indices with machine predictions, or None when overlay is unavailable."""
-		handler = self.video_handler
-		if not handler.machine_labels_path:
-			return None
-		handler.ensure_machine_labels_loaded()
-		mlh = handler.machine_labels_handler
-		if mlh is None:
-			return None
-		return mlh.get_nonempty_frames(video_name)
-
 	def state_dict(self) -> dict:
 		handler = self.video_handler
 		active = handler.data_handler.active_point
@@ -357,22 +414,8 @@ class LabelingEngine(BaseModel):
 		nav_video = self._nav_video_name()
 		labeled_frame_list = handler.data_handler.get_nonempty_frames(nav_video)
 		labeled = len(labeled_frame_list)
-		sample_for_nav = sample_frames_for_video(
-			self._sample_frames_by_video, nav_video
-		)
-		# Predicted frames must be tied to the active video — never a cross-video union.
-		# Non-empty per-video samples win; otherwise use this video's machine CSV rows.
-		if sample_for_nav:
-			machine_frame_list = None
-			sample_frames = sample_for_nav
-		else:
-			machine_frame_list = self._machine_nonempty_frames(nav_video)
-			sample_frames = None
-		nav_frame_list = build_nav_frame_list(
-			labeled_frame_list,
-			machine_frame_list,
-			sample_frames=sample_frames,
-		)
+		# Human frames only — predictions are reviewed via live scrub / Full Analysis.
+		nav_frame_list = build_nav_frame_list(labeled_frame_list)
 		placed_points, available_points = self._frame_label_status()
 		tracked = handler.data_handler.config.tracked_point_names
 		point_colors = {
@@ -394,7 +437,13 @@ class LabelingEngine(BaseModel):
 			"show_machine_labels": self.show_machine_labels,
 			"show_help": self.show_help,
 			"show_names": self.show_names,
-			"has_machine_labels": bool(handler.machine_labels_path),
+			"has_machine_labels": bool(
+				handler.machine_labels_path
+				or (self._live_inference is not None and self._live_inference.ready)
+			),
+			"live_inference_ready": bool(
+				self._live_inference is not None and self._live_inference.ready
+			),
 			"auto_next_point": self.auto_next_point,
 			"grid_width": handler.grid_parameters.total_width,
 			"grid_height": handler.grid_parameters.total_height,

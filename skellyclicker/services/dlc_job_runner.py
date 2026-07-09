@@ -42,13 +42,11 @@ class DLCJobRunner:
 			raise ValueError("Load a DLC project first")
 		if not session.videos:
 			raise ValueError("Select videos first")
-		csv_path = (
-			session.machine_labels_path
-			if session.train_on_machine_labels
-			else session.human_labels_path
-		)
+		# Web Train Network always uses human labels — live scrub replaces
+		# partial-analyze / train-on-machine for interactive review.
+		csv_path = session.human_labels_path
 		if not csv_path:
-			raise ValueError("Load or save labels before training")
+			raise ValueError("Save human labels before training")
 
 		handler = store.dlc_handler
 		videos = list(session.videos)

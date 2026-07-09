@@ -31,24 +31,39 @@ class SessionStore:
 		self.dlc_handler: Any | None = None
 		self.jobs: dict[str, BackgroundJob] = {}
 		self.job_runner = DLCJobRunner(self)
+		# Warm DLC runners for scrub-time machine overlays (loaded with DLC project).
+		self.live_inference: Any | None = None
 
 	def get_session(self) -> AppSession:
 		return self._finalize_session()
 
 	def _sync_machine_labels_path_to_latest(self) -> None:
-		"""Point session at the newest skellyclicker machine-labels CSV on disk."""
+		"""Point session at the newest machine-labels CSV under the loaded DLC project.
+
+		Search the project tree only — never video-folder leftovers from a previous
+		project on the same videos (those can show the wrong bodypart count).
+		"""
 		if not self.session.dlc_project_path:
 			return
 		try:
-			_, config_path = resolve_dlc_project_input(self.session.dlc_project_path)
+			project_dir, config_path = resolve_dlc_project_input(
+				self.session.dlc_project_path
+			)
 		except ValueError:
 			return
-		latest = resolve_latest_machine_labels_path(
-			str(config_path),
-			video_paths=self.session.videos,
-		)
+		# video_paths=None: do not pick up *_model_outputs next to videos.
+		latest = resolve_latest_machine_labels_path(str(config_path), video_paths=None)
 		if latest is not None:
 			self.session.machine_labels_path = str(latest)
+			return
+		# No project-local CSV: drop a stale path that lives outside this project.
+		current = self.session.machine_labels_path
+		if not current:
+			return
+		try:
+			Path(current).expanduser().resolve().relative_to(project_dir.resolve())
+		except (ValueError, OSError):
+			self.session.machine_labels_path = None
 
 	def _finalize_session(self) -> AppSession:
 		"""Attach fresh path checks and derived workflow state before API responses."""
@@ -74,7 +89,51 @@ class SessionStore:
 	def _teardown_all(self) -> None:
 		self._teardown_labeler()
 		self.dlc_handler = None
+		if self.live_inference is not None:
+			self.live_inference.close()
+			self.live_inference = None
 		self._bump_generation()
+
+	def _close_live_inference(self) -> None:
+		"""Drop warm runners (e.g. when switching to an untrained / new project)."""
+		if self.live_inference is not None:
+			close = getattr(self.live_inference, "close", None)
+			if callable(close):
+				close()
+			self.live_inference = None
+		if self.labeling_engine is not None:
+			self.labeling_engine.attach_live_inference(None)
+
+	def _ensure_live_inference(self) -> None:
+		"""Load warm runners only when the project has trained .pt snapshots."""
+		if not self.dlc_handler:
+			self._close_live_inference()
+			return
+		config_path = getattr(self.dlc_handler, "project_config_path", None)
+		if not config_path:
+			self._close_live_inference()
+			return
+		from skellyclicker.services.dlc_paths import (
+			dlc_project_dir,
+			latest_iteration_with_pytorch_model,
+		)
+		from skellyclicker.services.live_inference import LiveInferenceService
+
+		project_dir = dlc_project_dir(str(config_path))
+		# Require real weights — pytorch_config alone exists before train_network.
+		if latest_iteration_with_pytorch_model(project_dir) is None:
+			self._close_live_inference()
+			return
+
+		if self.live_inference is None:
+			self.live_inference = LiveInferenceService()
+		try:
+			self.live_inference.load(str(config_path))
+		except Exception as exc:
+			# Labeler still works without live scrub; clear so overlays stay off.
+			self._close_live_inference()
+			self.session.status_message = f"Live machine labels unavailable: {exc}"
+
 
 	def start_new_session(self) -> AppSession:
 		self._assert_no_active_job()
@@ -270,6 +329,8 @@ class SessionStore:
 			)
 		self._teardown_labeler()
 		open_paths = self._labeler_video_paths()
+		# Best-effort warm model for on-the-fly scrub predictions (corpus/single).
+		self._ensure_live_inference()
 		engine = LabelingEngine.open(
 			video_paths=open_paths,
 			human_labels_path=self.session.human_labels_path,
@@ -281,6 +342,8 @@ class SessionStore:
 			session_video_paths=list(self.session.videos),
 			active_video_path=self.session.active_video_path,
 		)
+		if self.live_inference is not None and self.live_inference.ready:
+			engine.attach_live_inference(self.live_inference)
 		self.labeling_engine = engine
 		self.session.labeling_session_id = engine.session_id
 		self.session.frame_count = engine.video_handler.frame_count
@@ -289,15 +352,21 @@ class SessionStore:
 		)
 		self.session.workflow_state = WorkflowState.labeling
 		mode = self.session.labeling_mode
+		live = (
+			self.live_inference is not None and self.live_inference.ready
+		)
+		live_note = " · live predictions" if live else ""
 		if mode == LabelingMode.synced:
-			self.session.status_message = f"Labeling ({len(open_paths)} cameras · shared timeline)"
+			self.session.status_message = (
+				f"Labeling ({len(open_paths)} cameras · shared timeline{live_note})"
+			)
 		elif mode == LabelingMode.corpus:
 			name = Path(open_paths[0]).name
 			self.session.status_message = (
-				f"Labeling ({len(self.session.videos)} videos · {name})"
+				f"Labeling ({len(self.session.videos)} videos · {name}{live_note})"
 			)
 		else:
-			self.session.status_message = "Labeling"
+			self.session.status_message = f"Labeling{live_note}"
 		return self.session
 
 	def set_active_labeling_video(self, video_path: str) -> AppSession:
@@ -416,6 +485,8 @@ class SessionStore:
 		self._sync_dlc_iteration_from_handler()
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
+		# Warm live runners only if this project has trained weights; else clear.
+		self._ensure_live_inference()
 		return self._finalize_session()
 
 	def _resolve_session_json_path(self, path: str) -> Path:
@@ -481,6 +552,7 @@ class SessionStore:
 					project_config_path=str(config_path.resolve())
 				)
 				self._sync_dlc_iteration_from_handler()
+				self._ensure_live_inference()
 		session = self._finalize_session()
 		missing = [c.path for c in session.asset_path_checks if not c.exists]
 		if missing:

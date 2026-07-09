@@ -41,9 +41,7 @@ function hasDlc(session: AppSession): boolean {
 }
 
 function hasLabelsForTrain(session: AppSession): boolean {
-	if (session.train_on_machine_labels) {
-		return !!session.machine_labels_path;
-	}
+	// Web train always uses human labels (live scrub replaces partial-analyze nav).
 	return !!session.human_labels_path;
 }
 
@@ -116,12 +114,12 @@ const NEXT_COPY: Record<StepId, { title: string; detail: string }> = {
 	analyze: {
 		title: "Analyze videos",
 		detail:
-			"Train & Analyze (Human Labels) runs training then partial analysis on labeled frames plus a diverse sample (~1%, 50–200 frames). Use Full Analysis for every frame.",
+			"After training, scrub the labeler for live model preview. Use Full Analysis when you want machine-label CSVs for every frame.",
 	},
 	review: {
 		title: "Review predictions",
 		detail:
-			"Open Labeler (m for model overlay), fix human labels, Save & Close, then Train & Analyze (Human Labels) or Full Analysis.",
+			"Open Labeler for live scrub preview (or m for CSV overlay), fix human labels, Save & Close, then Train Network or Full Analysis.",
 	},
 };
 
@@ -171,9 +169,7 @@ export function trainBlockReason(session: AppSession): string | null {
 	if (!session.dlc_project_path) return "Load or create a DLC project first";
 	if (!hasVideos(session)) return "Add videos first";
 	if (!hasLabelsForTrain(session)) {
-		return session.train_on_machine_labels
-			? "Import or generate machine labels before training"
-			: "Label videos or import human labels before training";
+		return "Label videos or import human labels before training";
 	}
 	return null;
 }
@@ -190,31 +186,6 @@ export function analyzeBlockReason(session: AppSession): string | null {
 	return null;
 }
 
-export function partialAnalyzeBlockReason(session: AppSession): string | null {
-	const base = analyzeBlockReason(session);
-	if (base) return base;
-	if (!session.human_labels_path) return "Save human labels before partial analysis";
-	return null;
-}
-
 export function canAnalyze(session: AppSession): boolean {
 	return analyzeBlockReason(session) === null;
-}
-
-export function canPartialAnalyze(session: AppSession): boolean {
-	return partialAnalyzeBlockReason(session) === null;
-}
-
-/** Train then auto-run partial analysis on human-labeled frames. */
-export function trainAndPartialAnalyzeBlockReason(session: AppSession): string | null {
-	const trainReason = trainBlockReason(session);
-	if (trainReason) return trainReason;
-	if (!session.human_labels_path) {
-		return "Save human labels before train & analyze";
-	}
-	return null;
-}
-
-export function canTrainAndPartialAnalyze(session: AppSession): boolean {
-	return trainAndPartialAnalyzeBlockReason(session) === null;
 }

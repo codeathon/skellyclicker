@@ -36,6 +36,8 @@ Press Space to play or pause frames.
 Press 'u' or Ctrl+Z to undo the last label (or clear active label on frame).`;
 
 const PLAY_INTERVAL_MS = 66;
+/** After scrub release, repaint a few times so late live-infer crosses appear. */
+const LIVE_OVERLAY_RETRY_MS = [120, 280, 500];
 
 function formatPointList(points: string[]): string {
 	return `[${points.join(", ")}]`;
@@ -61,8 +63,12 @@ async function isJpegBlob(blob: Blob): Promise<boolean> {
 }
 
 function resolveNavFrames(state: LabelingState): NavFrameItem[] {
+	// Left panel is human-labeled frames only (live scrub covers predictions).
 	if (state.nav_frame_list?.length) {
-		return state.nav_frame_list;
+		return state.nav_frame_list.map((item) => ({
+			frame: item.frame,
+			kind: "human" as const,
+		}));
 	}
 	return (state.labeled_frame_list ?? []).map((frame) => ({
 		frame,
@@ -70,24 +76,8 @@ function resolveNavFrames(state: LabelingState): NavFrameItem[] {
 	}));
 }
 
-function navFrameCounts(items: NavFrameItem[]): {
-	human: number;
-	machine: number;
-	both: number;
-} {
-	let human = 0;
-	let machine = 0;
-	let both = 0;
-	for (const item of items) {
-		if (item.kind === "human") human += 1;
-		else if (item.kind === "machine") machine += 1;
-		else both += 1;
-	}
-	return { human, machine, both };
-}
-
-function navFrameBtnClass(frame: number, kind: NavFrameItem["kind"], activeFrame: number): string {
-	const classes = ["labeling-frame-btn", `labeling-frame-btn--${kind}`];
+function navFrameBtnClass(frame: number, activeFrame: number): string {
+	const classes = ["labeling-frame-btn", "labeling-frame-btn--human"];
 	if (frame === activeFrame) {
 		classes.push("labeling-frame-btn--active");
 	}
@@ -114,10 +104,12 @@ export function LabelingCanvas({
 	const stageRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
 	const scrubRafRef = useRef<number | null>(null);
+	const liveOverlayTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 	const pendingPreviewFrameRef = useRef<number | null>(null);
 	const previewBusyRef = useRef(false);
 	const scrubbingRef = useRef(false);
 	const previewGenRef = useRef(0);
+	const stateRef = useRef<LabelingState | null>(null);
 	// Prevent Esc / double-click from starting a second close while the save dialog is open.
 	const closingRef = useRef(false);
 	const [scrubbing, setScrubbing] = useState(false);
@@ -130,6 +122,10 @@ export function LabelingCanvas({
 	useEffect(() => {
 		labelsPathRef.current = humanLabelsPath;
 	}, [humanLabelsPath]);
+
+	useEffect(() => {
+		stateRef.current = state;
+	}, [state]);
 
 	const fitCanvasToStage = useCallback(() => {
 		const stage = stageRef.current;
@@ -206,8 +202,33 @@ export function LabelingCanvas({
 		[paintFrameBlob],
 	);
 
+	const clearLiveOverlayRetries = useCallback(() => {
+		for (const id of liveOverlayTimersRef.current) clearTimeout(id);
+		liveOverlayTimersRef.current = [];
+	}, []);
+
+	const scheduleLiveOverlayRetries = useCallback(
+		(frameNumber: number, gen: number) => {
+			clearLiveOverlayRetries();
+			if (!stateRef.current?.live_inference_ready) return;
+			for (const delay of LIVE_OVERLAY_RETRY_MS) {
+				const id = setTimeout(() => {
+					if (gen !== previewGenRef.current) return;
+					if (scrubbingRef.current || playingRef.current) return;
+					if (frameRef.current !== frameNumber) return;
+					void fetchAndPaintFrame(frameNumber, false, gen).catch(() => {
+						/* ignore — next retry or user action will refresh */
+					});
+				}, delay);
+				liveOverlayTimersRef.current.push(id);
+			}
+		},
+		[clearLiveOverlayRetries, fetchAndPaintFrame],
+	);
+
 	const loadFrame = useCallback(
 		async (frameNumber: number) => {
+			clearLiveOverlayRetries();
 			const gen = ++previewGenRef.current;
 			pendingPreviewFrameRef.current = null;
 			const s = await client.setFrame(frameNumber);
@@ -216,8 +237,11 @@ export function LabelingCanvas({
 			setSliderFrame(s.frame_number);
 			setState(s);
 			await fetchAndPaintFrame(s.frame_number, false, gen);
+			if (gen === previewGenRef.current) {
+				scheduleLiveOverlayRetries(s.frame_number, gen);
+			}
 		},
-		[fetchAndPaintFrame],
+		[fetchAndPaintFrame, clearLiveOverlayRetries, scheduleLiveOverlayRetries],
 	);
 
 	const stopPlaying = useCallback(
@@ -332,7 +356,6 @@ export function LabelingCanvas({
 		(frameNumber: number) => {
 			scrubbingRef.current = false;
 			setScrubbing(false);
-			previewGenRef.current += 1;
 			pendingPreviewFrameRef.current = null;
 			void loadFrame(frameNumber).catch((err) => {
 				if (isIgnorableFetchError(err)) return;
@@ -359,11 +382,12 @@ export function LabelingCanvas({
 		return () => {
 			previewGenRef.current += 1;
 			pendingPreviewFrameRef.current = null;
+			clearLiveOverlayRetries();
 			if (scrubRafRef.current != null) cancelAnimationFrame(scrubRafRef.current);
 			if (playTimerRef.current != null) clearInterval(playTimerRef.current);
 			playingRef.current = false;
 		};
-	}, [refresh]);
+	}, [refresh, clearLiveOverlayRetries]);
 
 	useEffect(() => {
 		frameCountRef.current = state?.frame_count ?? 0;
@@ -652,8 +676,6 @@ export function LabelingCanvas({
 		humanLabelsCsvDefaultName(videoPaths);
 	const machineLabelsName = labelsFileBasename(machineLabelsPath);
 	const navFrames = resolveNavFrames(state);
-	const navCounts = navFrameCounts(navFrames);
-	const hasPredictedNav = navCounts.machine > 0 || navCounts.both > 0;
 	const showVideoSelector =
 		state.labeling_mode === "corpus" &&
 		(state.session_videos?.length ?? 0) > 1;
@@ -676,22 +698,8 @@ export function LabelingCanvas({
 			<div className="labeling-body">
 				<aside className="labeling-frame-list" aria-label="Frame navigation">
 					<h3 className="labeling-hud-title">
-						{hasPredictedNav
-							? `Frames: ${navCounts.human + navCounts.both} human · ${navCounts.machine + navCounts.both} predicted`
-							: `Labeled frames: ${state.labeled_frames}`}
+						Labeled frames: {state.labeled_frames}
 					</h3>
-					{hasPredictedNav && (
-						<div className="labeling-frame-nav-legend">
-							<span className="label-legend-key">
-								<span className="labeling-frame-nav-swatch labeling-frame-nav-swatch--human" />
-								Human
-							</span>
-							<span className="label-legend-key">
-								<span className="labeling-frame-nav-swatch labeling-frame-nav-swatch--machine" />
-								Predicted
-							</span>
-						</div>
-					)}
 					{navFrames.length > 0 ? (
 						<ul className="labeling-frame-queue">
 							{navFrames.map((item) => (
@@ -700,7 +708,6 @@ export function LabelingCanvas({
 										type="button"
 										className={navFrameBtnClass(
 											item.frame,
-											item.kind,
 											state.frame_number,
 										)}
 										disabled={isClosing}
@@ -932,11 +939,20 @@ export function LabelingCanvas({
 				{playing && (
 					<p className="hint scrub-hint">Playing preview frames — pause to edit labels</p>
 				)}
-				{scrubbing && !playing && state.has_machine_labels && (
-					<p className="hint scrub-hint">Machine predictions shown while scrubbing</p>
+				{scrubbing && !playing && (state.has_machine_labels || state.live_inference_ready) && (
+					<p className="hint scrub-hint">
+						{state.live_inference_ready
+							? "Live machine preview (not saved) — release to label this frame"
+							: "Machine predictions shown while scrubbing — release to label"}
+					</p>
 				)}
-				{scrubbing && !playing && !state.has_machine_labels && (
-					<p className="hint scrub-hint">Release slider to load full frame</p>
+				{scrubbing && !playing && !state.has_machine_labels && !state.live_inference_ready && (
+					<p className="hint scrub-hint">Release slider to load full frame and label</p>
+				)}
+				{!scrubbing && !playing && state.live_inference_ready && (
+					<p className="hint scrub-hint">
+						Click to place human labels on this frame (live preview is not saved)
+					</p>
 				)}
 			</div>
 		</div>

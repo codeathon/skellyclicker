@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -41,6 +42,11 @@ class VideoHandler(BaseModel):
     machine_labels_path: str | None = None
     machine_labels_handler: DataHandler | None
     machine_labels_annotator: ImageAnnotator | None
+    # Display-only live scrub predictions — never written to machine CSV.
+    # Callable[[video_name, frame], dict[str, tuple[float, float]] | None]
+    live_points_lookup: Any | None = None
+    # When True (scrub preview), lookup may return sticky/nearby predictions.
+    live_overlay_sticky: bool = False
 
     @classmethod
     def from_videos(
@@ -195,6 +201,11 @@ class VideoHandler(BaseModel):
             tracked_point_names=self.data_handler.config.tracked_point_names,
         )
         self.machine_labels_handler = handler
+        self._ensure_machine_annotator()
+
+    def _ensure_machine_annotator(self) -> None:
+        if self.machine_labels_annotator is not None:
+            return
         self.machine_labels_annotator = ImageAnnotator(
             config=ImageAnnotatorConfig(
                 marker_type=cv2.MARKER_CROSS,
@@ -204,6 +215,48 @@ class VideoHandler(BaseModel):
                 show_clicks=False,
             )
         )
+
+    def _machine_click_data_for_frame(
+        self, video_index: int, frame_number: int
+    ) -> dict:
+        """CSV machine labels for this frame, else display-only live cache (never saved)."""
+        from skellyclicker.core.video_handler.video_models import ClickData
+
+        # Only draw bodyparts from the active session/DLC project.
+        allowed = set(self.data_handler.config.tracked_point_names)
+
+        if self.machine_labels_path:
+            self.ensure_machine_labels_loaded()
+        if self.machine_labels_handler is not None:
+            csv_data = self.machine_labels_handler.get_data_by_video_frame(
+                video_index=video_index, frame_number=frame_number
+            )
+            if csv_data:
+                return {k: v for k, v in csv_data.items() if k in allowed}
+        # Preview-only live predictions — in-memory cache, not the machine CSV.
+        lookup = self.live_points_lookup
+        if lookup is None:
+            return {}
+        video_name = sorted(v.name for v in self.videos.values())[video_index]
+        # Sticky during scrub: exact frame is rarely cached when dragging fast.
+        if self.live_overlay_sticky:
+            points = lookup(video_name, frame_number, sticky=True)
+        else:
+            points = lookup(video_name, frame_number)
+        if not points:
+            return {}
+        return {
+            name: ClickData(
+                video_index=video_index,
+                frame_number=frame_number,
+                video_x=int(x),
+                video_y=int(y),
+                window_x=int(x),
+                window_y=int(y),
+            )
+            for name, (x, y) in points.items()
+            if name in allowed
+        }
 
     @classmethod
     def _open_videos(
@@ -406,22 +459,16 @@ class VideoHandler(BaseModel):
                             video_index=video_index, frame_number=frame_number
                         ),
                     )
-                if (
-                    self.show_machine_labels
-                    and self.machine_labels_path
-                ):
-                    self.ensure_machine_labels_loaded()
-                if (
-                    self.show_machine_labels
-                    and self.machine_labels_handler is not None
-                    and self.machine_labels_annotator is not None
-                ):
-                    image = self.machine_labels_annotator.annotate_single_image(
-                        image,
-                        click_data=self.machine_labels_handler.get_data_by_video_frame(
-                            video_index=video_index, frame_number=frame_number
-                        ),
+                if self.show_machine_labels:
+                    click_data = self._machine_click_data_for_frame(
+                        video_index, frame_number
                     )
+                    if click_data:
+                        self._ensure_machine_annotator()
+                        image = self.machine_labels_annotator.annotate_single_image(
+                            image,
+                            click_data=click_data,
+                        )
 
                 if zoom_state.scale > 1.0:
                     zoomed_width = int(scaling.scaled_width * zoom_state.scale)
