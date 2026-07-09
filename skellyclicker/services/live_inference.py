@@ -1,0 +1,313 @@
+"""Warm DeepLabCut runners for on-the-fly single-frame machine labels in the labeler."""
+
+from __future__ import annotations
+
+import logging
+import threading
+from collections import OrderedDict
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# Keep recent scrub predictions without unbounded GPU/CPU memory growth.
+DEFAULT_CACHE_SIZE = 128
+
+ProgressCallback = Callable[[float | None, str], None]
+
+
+class LiveInferenceService:
+	"""Session-scoped pose inference for coalesced scrub overlays.
+
+	Loads runners once, caches (video, frame) predictions, and serializes
+	inference so scrub can request the latest frame without blocking every tick.
+	"""
+
+	def __init__(self, *, cache_size: int = DEFAULT_CACHE_SIZE) -> None:
+		self._lock = threading.RLock()
+		self._cache: OrderedDict[tuple[str, int], dict[str, tuple[float, float]]] = (
+			OrderedDict()
+		)
+		self._cache_size = max(int(cache_size), 1)
+		self._pose_runner: Any | None = None
+		self._detector_runner: Any | None = None
+		self._bodyparts: list[str] = []
+		self._config_path: str | None = None
+		self._ready = False
+		self._load_error: str | None = None
+		# Coalesced background work: only the newest pending request runs.
+		self._pending: tuple[str, int] | None = None
+		self._worker: threading.Thread | None = None
+		self._on_result: Callable[[str, int, dict[str, tuple[float, float]]], None] | None = (
+			None
+		)
+
+	@property
+	def ready(self) -> bool:
+		return self._ready
+
+	@property
+	def load_error(self) -> str | None:
+		return self._load_error
+
+	@property
+	def bodyparts(self) -> list[str]:
+		return list(self._bodyparts)
+
+	def set_result_callback(
+		self,
+		callback: Callable[[str, int, dict[str, tuple[float, float]]], None] | None,
+	) -> None:
+		"""Called on the worker thread after a successful background infer."""
+		self._on_result = callback
+
+	def load(self, project_config_path: str, *, batch_size: int = 1) -> None:
+		"""Build warm pose (+ detector) runners from a DLC project config.yaml."""
+		with self._lock:
+			if self._ready and self._config_path == str(
+				Path(project_config_path).expanduser().resolve()
+			):
+				return
+			self._ready = False
+			self._load_error = None
+			self._pose_runner = None
+			self._detector_runner = None
+			self._bodyparts = []
+			self._cache.clear()
+
+		try:
+			self._load_runners(project_config_path, batch_size=batch_size)
+		except Exception as exc:
+			logger.exception("Live inference failed to load model")
+			with self._lock:
+				self._load_error = str(exc)
+				self._ready = False
+			raise
+
+	def _load_runners(self, project_config_path: str, *, batch_size: int) -> None:
+		from deeplabcut.compat import _update_device
+		from deeplabcut.core.engine import Engine
+		from deeplabcut.pose_estimation_pytorch.runners import DynamicCropper
+		from deeplabcut.pose_estimation_pytorch.task import Task
+		import deeplabcut.pose_estimation_pytorch.apis.utils as utils
+		from deeplabcut.utils import auxiliaryfunctions
+
+		from skellyclicker.services.dlc_paths import resolve_analyze_iteration
+
+		_update_device(None, {})
+		config_path = Path(project_config_path).expanduser().resolve()
+		project_path = config_path.parent
+		cfg = auxiliaryfunctions.read_config(str(config_path))
+		analyze_iteration = resolve_analyze_iteration(project_path, cfg)
+		cfg = dict(cfg)
+		cfg["iteration"] = analyze_iteration
+
+		train_fraction = cfg["TrainingFraction"][0]
+		model_folder = project_path / auxiliaryfunctions.get_model_folder(
+			train_fraction, 1, cfg, engine=Engine.PYTORCH
+		)
+		train_folder = model_folder / "train"
+		model_cfg_path = train_folder / Engine.PYTORCH.pose_cfg_name
+		if not model_cfg_path.is_file():
+			raise FileNotFoundError(
+				f"PyTorch model config not found: {model_cfg_path}. Train the network first."
+			)
+
+		model_cfg = auxiliaryfunctions.read_plainconfig(model_cfg_path)
+		pose_task = Task(model_cfg["method"])
+		snapshot_index, detector_snapshot_index = utils.parse_snapshot_index_for_analysis(
+			cfg, model_cfg, None, None
+		)
+
+		dynamic = DynamicCropper.build(False, 0.5, 10)
+		if pose_task != Task.BOTTOM_UP:
+			dynamic = None
+
+		snapshot = utils.get_model_snapshots(snapshot_index, train_folder, pose_task)[0]
+		# batch_size=1 for interactive single-frame scrub.
+		pose_runner = utils.get_pose_inference_runner(
+			model_config=model_cfg,
+			snapshot_path=snapshot.path,
+			max_individuals=len(model_cfg["metadata"]["individuals"]),
+			batch_size=batch_size,
+			dynamic=dynamic,
+		)
+
+		detector_runner = None
+		if pose_task == Task.TOP_DOWN:
+			detector_snapshot = utils.get_model_snapshots(
+				detector_snapshot_index, train_folder, Task.DETECT
+			)[0]
+			detector_runner = utils.get_detector_inference_runner(
+				model_config=model_cfg,
+				snapshot_path=detector_snapshot.path,
+				max_individuals=len(model_cfg["metadata"]["individuals"]),
+				batch_size=1,
+			)
+
+		bodyparts = list(model_cfg["metadata"]["bodyparts"])
+		with self._lock:
+			self._pose_runner = pose_runner
+			self._detector_runner = detector_runner
+			self._bodyparts = bodyparts
+			self._config_path = str(config_path)
+			self._ready = True
+			self._load_error = None
+		logger.info(
+			"Live inference ready (%s, %d bodyparts, iteration %s)",
+			pose_task,
+			len(bodyparts),
+			analyze_iteration,
+		)
+
+	def close(self) -> None:
+		with self._lock:
+			self._pending = None
+			self._pose_runner = None
+			self._detector_runner = None
+			self._bodyparts = []
+			self._cache.clear()
+			self._ready = False
+			self._config_path = None
+			self._on_result = None
+
+	def get_cached(
+		self, video_name: str, frame_number: int
+	) -> dict[str, tuple[float, float]] | None:
+		"""Return cached bodypart → (x, y) for a video frame, or None."""
+		key = (Path(video_name).name, int(frame_number))
+		with self._lock:
+			if key not in self._cache:
+				return None
+			self._cache.move_to_end(key)
+			return dict(self._cache[key])
+
+	def _store_cache(
+		self, video_name: str, frame_number: int, points: dict[str, tuple[float, float]]
+	) -> None:
+		key = (Path(video_name).name, int(frame_number))
+		with self._lock:
+			self._cache[key] = points
+			self._cache.move_to_end(key)
+			while len(self._cache) > self._cache_size:
+				self._cache.popitem(last=False)
+
+	def infer_frame(
+		self, video_path: str, frame_number: int
+	) -> dict[str, tuple[float, float]]:
+		"""Seek + infer one frame synchronously (own VideoCapture, not labeler caps)."""
+		cached = self.get_cached(Path(video_path).name, frame_number)
+		if cached is not None:
+			return cached
+		with self._lock:
+			if not self._ready or self._pose_runner is None:
+				raise RuntimeError(
+					self._load_error or "Live inference model is not loaded"
+				)
+			pose_runner = self._pose_runner
+			detector_runner = self._detector_runner
+			bodyparts = list(self._bodyparts)
+
+		frame = self._read_frame(video_path, frame_number)
+		points = self._run_inference(frame, pose_runner, detector_runner, bodyparts)
+		self._store_cache(Path(video_path).name, frame_number, points)
+		return points
+
+	@staticmethod
+	def _read_frame(video_path: str, frame_number: int) -> np.ndarray:
+		cap = cv2.VideoCapture(str(video_path))
+		if not cap.isOpened():
+			raise FileNotFoundError(f"Could not open video for live inference: {video_path}")
+		try:
+			cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_number))
+			ok, frame = cap.read()
+			if not ok or frame is None:
+				raise RuntimeError(
+					f"Could not read frame {frame_number} from {video_path}"
+				)
+			return frame
+		finally:
+			cap.release()
+
+	@staticmethod
+	def _run_inference(
+		frame_bgr: np.ndarray,
+		pose_runner: Any,
+		detector_runner: Any | None,
+		bodyparts: list[str],
+	) -> dict[str, tuple[float, float]]:
+		# DLC runners expect RGB images (same as VideoIterator path).
+		frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+		if detector_runner is not None:
+			det = detector_runner.inference([frame_rgb])
+			bboxes = det[0].get("bboxes") if det else None
+			if bboxes is None:
+				return {}
+			predictions = pose_runner.inference([(frame_rgb, {"bboxes": bboxes})])
+		else:
+			predictions = pose_runner.inference([frame_rgb])
+		if not predictions:
+			return {}
+		return LiveInferenceService._prediction_to_points(predictions[0], bodyparts)
+
+	@staticmethod
+	def _prediction_to_points(
+		pred: dict, bodyparts: list[str]
+	) -> dict[str, tuple[float, float]]:
+		coords = pred["bodyparts"]
+		if coords.ndim == 3:
+			coords = coords[0]
+		points: dict[str, tuple[float, float]] = {}
+		for i, bp in enumerate(bodyparts):
+			if i >= coords.shape[0]:
+				break
+			x, y = float(coords[i, 0]), float(coords[i, 1])
+			if np.isnan(x) or np.isnan(y):
+				continue
+			# Drop very low-confidence points when likelihood is present.
+			if coords.shape[1] > 2 and float(coords[i, 2]) < 0.1:
+				continue
+			points[bp] = (x, y)
+		return points
+
+	def request_infer(self, video_path: str, frame_number: int) -> None:
+		"""Coalesce background inference to the latest (video, frame) request."""
+		if not self._ready:
+			return
+		name = Path(video_path).name
+		if self.get_cached(name, frame_number) is not None:
+			return
+		with self._lock:
+			self._pending = (str(video_path), int(frame_number))
+			if self._worker is not None and self._worker.is_alive():
+				return
+			self._worker = threading.Thread(
+				target=self._worker_loop, name="live-infer", daemon=True
+			)
+			self._worker.start()
+
+	def _worker_loop(self) -> None:
+		while True:
+			with self._lock:
+				pending = self._pending
+				self._pending = None
+			if pending is None:
+				break
+			video_path, frame_number = pending
+			try:
+				points = self.infer_frame(video_path, frame_number)
+				callback = self._on_result
+				if callback is not None:
+					callback(Path(video_path).name, frame_number, points)
+			except Exception:
+				logger.exception(
+					"Live inference failed for %s frame %s", video_path, frame_number
+				)
+			with self._lock:
+				if self._pending is None:
+					self._worker = None
+					break

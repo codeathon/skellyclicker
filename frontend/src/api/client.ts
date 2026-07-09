@@ -74,6 +74,7 @@ export interface LabelingState {
   show_help: boolean;
   show_names: boolean;
   has_machine_labels: boolean;
+  live_inference_ready?: boolean;
   auto_next_point: boolean;
   grid_width: number;
   grid_height: number;

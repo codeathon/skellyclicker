@@ -932,11 +932,20 @@ export function LabelingCanvas({
 				{playing && (
 					<p className="hint scrub-hint">Playing preview frames — pause to edit labels</p>
 				)}
-				{scrubbing && !playing && state.has_machine_labels && (
-					<p className="hint scrub-hint">Machine predictions shown while scrubbing</p>
+				{scrubbing && !playing && (state.has_machine_labels || state.live_inference_ready) && (
+					<p className="hint scrub-hint">
+						{state.live_inference_ready
+							? "Live machine preview (not saved) — release to label this frame"
+							: "Machine predictions shown while scrubbing — release to label"}
+					</p>
 				)}
-				{scrubbing && !playing && !state.has_machine_labels && (
-					<p className="hint scrub-hint">Release slider to load full frame</p>
+				{scrubbing && !playing && !state.has_machine_labels && !state.live_inference_ready && (
+					<p className="hint scrub-hint">Release slider to load full frame and label</p>
+				)}
+				{!scrubbing && !playing && state.live_inference_ready && (
+					<p className="hint scrub-hint">
+						Click to place human labels on this frame (live preview is not saved)
+					</p>
 				)}
 			</div>
 		</div>
