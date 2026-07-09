@@ -285,7 +285,22 @@ class VideoHandler(BaseModel):
             )
 
         if len(image_counts) > 1:
-            raise ValueError("All videos must have the same number of images")
+            # Corpus / unsynced sessions must open one video at a time — never a grid.
+            counts = ", ".join(
+                f"{Path(p).name}={v.metadata.frame_count}"
+                for p, v in videos.items()
+            )
+            # Release captures opened before the mismatch was detected.
+            for video in videos.values():
+                try:
+                    video.cap.release()
+                except Exception:
+                    pass
+            raise ValueError(
+                "All videos must have the same number of images for synced "
+                f"multi-camera labeling ({counts}). Unequal lengths use "
+                "corpus mode (one video at a time)."
+            )
 
         return videos, image_counts.pop()
 
