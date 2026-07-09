@@ -17,9 +17,12 @@ logger = logging.getLogger(__name__)
 # Keep recent scrub predictions without unbounded GPU/CPU memory growth.
 DEFAULT_CACHE_SIZE = 256
 # Downscale long side before DLC — big win for scrub latency; coords scaled back.
-LIVE_INFER_MAX_SIDE = 512
+# 384 keeps overlays usable while cutting GPU time vs full-res / 512.
+LIVE_INFER_MAX_SIDE = 384
 # Prefer sequential reads when scrubbing nearby frames (cheaper than random seek).
 _SEQUENTIAL_SEEK_MAX_GAP = 8
+# Fast scrub rarely hits the exact frame in cache — reuse a nearby prediction.
+STICKY_MAX_FRAME_DISTANCE = 45
 
 
 ProgressCallback = Callable[[float | None, str], None]
@@ -43,6 +46,8 @@ class LiveInferenceService:
 		self._cache: OrderedDict[tuple[str, int], dict[str, tuple[float, float]]] = (
 			OrderedDict()
 		)
+		# Newest successful infer per video — keeps crosses visible during fast scrub.
+		self._last_by_video: dict[str, tuple[int, dict[str, tuple[float, float]]]] = {}
 		self._cache_size = max(int(cache_size), 1)
 		self._max_side = max(int(max_side), 64)
 		self._pose_runner: Any | None = None
@@ -94,6 +99,7 @@ class LiveInferenceService:
 			self._detector_runner = None
 			self._bodyparts = []
 			self._cache.clear()
+			self._last_by_video.clear()
 		self._close_capture()
 
 		try:
@@ -208,6 +214,7 @@ class LiveInferenceService:
 			self._detector_runner = None
 			self._bodyparts = []
 			self._cache.clear()
+			self._last_by_video.clear()
 			self._ready = False
 			self._config_path = None
 			self._on_result = None
@@ -224,6 +231,44 @@ class LiveInferenceService:
 			self._cache.move_to_end(key)
 			return dict(self._cache[key])
 
+	def get_overlay_points(
+		self,
+		video_name: str,
+		frame_number: int,
+		*,
+		sticky: bool = False,
+		max_distance: int = STICKY_MAX_FRAME_DISTANCE,
+	) -> dict[str, tuple[float, float]] | None:
+		"""Points for drawing: exact cache hit, or sticky nearby/last during scrub."""
+		name = Path(video_name).name
+		frame = int(frame_number)
+		exact = self.get_cached(name, frame)
+		if exact is not None:
+			return exact
+		if not sticky:
+			return None
+		with self._lock:
+			# Prefer nearest cached frame within max_distance (better than stale last).
+			best: tuple[int, dict[str, tuple[float, float]]] | None = None
+			best_dist = max_distance + 1
+			for (v, f), pts in self._cache.items():
+				if v != name:
+					continue
+				dist = abs(f - frame)
+				if dist < best_dist:
+					best_dist = dist
+					best = (f, pts)
+			if best is not None and best_dist <= max_distance:
+				return dict(best[1])
+			last = self._last_by_video.get(name)
+			if last is None:
+				return None
+			last_frame, pts = last
+			if abs(last_frame - frame) <= max_distance:
+				return dict(pts)
+			# Still show last known during very fast scrub so crosses don't vanish.
+			return dict(pts)
+
 	def _store_cache(
 		self, video_name: str, frame_number: int, points: dict[str, tuple[float, float]]
 	) -> None:
@@ -231,6 +276,7 @@ class LiveInferenceService:
 		with self._lock:
 			self._cache[key] = points
 			self._cache.move_to_end(key)
+			self._last_by_video[key[0]] = (key[1], points)
 			while len(self._cache) > self._cache_size:
 				self._cache.popitem(last=False)
 

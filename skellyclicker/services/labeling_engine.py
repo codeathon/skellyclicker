@@ -209,8 +209,8 @@ class LabelingEngine(BaseModel):
 		if service is None:
 			self.video_handler.live_points_lookup = None
 			return
-		# Draw from the in-memory LRU only — do not merge into machine_labels_handler/CSV.
-		self.video_handler.live_points_lookup = service.get_cached
+		# Sticky-aware lookup for scrub; exact frame when sticky is off.
+		self.video_handler.live_points_lookup = service.get_overlay_points
 
 	def _live_infer_video_path(self) -> str | None:
 		"""Active video path for live scrub infer (corpus/single)."""
@@ -274,20 +274,23 @@ class LabelingEngine(BaseModel):
 			prev_show = self.video_handler.show_machine_labels
 			prev_help = self.video_handler.image_annotator.config.show_help
 			prev_names = self.video_handler.image_annotator.config.show_names
+			prev_sticky = self.video_handler.live_overlay_sticky
 			try:
 				live = self._live_inference
 				has_csv = bool(self.video_handler.machine_labels_path)
 				has_live = bool(live and live.ready)
 				if preview:
-					# Scrub: always show CSV and/or ephemeral live cache when available.
+					# Scrub: sticky last/nearby live points so crosses stay visible
+					# while coalesced infer lags behind a fast drag.
 					self.video_handler.show_machine_labels = has_csv or has_live
+					self.video_handler.live_overlay_sticky = has_live
 					if has_csv:
 						self.video_handler.ensure_machine_labels_loaded()
 					if has_live:
 						self._maybe_request_live_infer(render_at)
 				else:
-					# Stopped/committed frame: human clicks save here.
-					# Keep live cache visible as a guide (still never saved); CSV follows `m`.
+					# Stopped/committed frame: prefer exact-frame cache (not sticky).
+					self.video_handler.live_overlay_sticky = False
 					self.video_handler.show_machine_labels = (
 						self.show_machine_labels or has_live
 					)
@@ -306,6 +309,7 @@ class LabelingEngine(BaseModel):
 			finally:
 				# Always restore — live preview must not leave overlay permanently on.
 				self.video_handler.show_machine_labels = prev_show
+				self.video_handler.live_overlay_sticky = prev_sticky
 				self.video_handler.image_annotator.config.show_help = prev_help
 				self.video_handler.image_annotator.config.show_names = prev_names
 				if self.video_handler.machine_labels_annotator is not None:

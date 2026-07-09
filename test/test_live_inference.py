@@ -71,7 +71,6 @@ def test_prepare_infer_image_downscales_and_reports_scale():
 
 
 def test_run_inference_scales_points_back_to_native(monkeypatch):
-	svc = LiveInferenceService(max_side=512)
 	frame = np.zeros((1000, 1000, 3), dtype=np.uint8)
 
 	class _Runner:
@@ -86,6 +85,17 @@ def test_run_inference_scales_points_back_to_native(monkeypatch):
 	x, y = points["nose"]
 	assert abs(x - 100.0 / 0.512) < 1e-3
 	assert abs(y - 50.0 / 0.512) < 1e-3
+
+
+def test_get_overlay_points_sticky_uses_nearest_or_last():
+	svc = LiveInferenceService()
+	svc._store_cache("cam.mp4", 10, {"nose": (1.0, 2.0)})
+	# Exact miss, sticky finds nearby frame 10.
+	assert svc.get_overlay_points("cam.mp4", 12, sticky=True) == {"nose": (1.0, 2.0)}
+	# Without sticky, exact miss returns None.
+	assert svc.get_overlay_points("cam.mp4", 12, sticky=False) is None
+	# Far scrub still shows last known so crosses don't vanish.
+	assert svc.get_overlay_points("cam.mp4", 500, sticky=True) == {"nose": (1.0, 2.0)}
 
 
 def test_live_cache_is_display_only_not_csv_handler():

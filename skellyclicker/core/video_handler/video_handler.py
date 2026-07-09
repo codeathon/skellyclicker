@@ -45,6 +45,8 @@ class VideoHandler(BaseModel):
     # Display-only live scrub predictions — never written to machine CSV.
     # Callable[[video_name, frame], dict[str, tuple[float, float]] | None]
     live_points_lookup: Any | None = None
+    # When True (scrub preview), lookup may return sticky/nearby predictions.
+    live_overlay_sticky: bool = False
 
     @classmethod
     def from_videos(
@@ -236,7 +238,11 @@ class VideoHandler(BaseModel):
         if lookup is None:
             return {}
         video_name = sorted(v.name for v in self.videos.values())[video_index]
-        points = lookup(video_name, frame_number)
+        # Sticky during scrub: exact frame is rarely cached when dragging fast.
+        if self.live_overlay_sticky:
+            points = lookup(video_name, frame_number, sticky=True)
+        else:
+            points = lookup(video_name, frame_number)
         if not points:
             return {}
         return {
