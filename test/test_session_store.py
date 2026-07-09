@@ -200,6 +200,7 @@ def test_save_labeler_rejects_machine_labels_path(fresh_store, tmp_path):
 
 
 def test_finalize_session_points_machine_labels_at_latest_csv(fresh_store, tmp_path):
+	"""When a project-local path is already set, upgrade to the newest iteration."""
 	project = tmp_path / "proj"
 	project.mkdir()
 	config = project / "config.yaml"
@@ -226,6 +227,26 @@ def test_finalize_session_points_machine_labels_at_latest_csv(fresh_store, tmp_p
 	assert session.machine_labels_path == str(new_csv.resolve())
 
 
+def test_finalize_does_not_invent_machine_labels_when_unset(fresh_store, tmp_path):
+	"""Loaded Assets must stay empty until analyze/import sets machine labels."""
+	project = tmp_path / "proj"
+	project.mkdir()
+	(project / "config.yaml").write_text("Task: test\niteration: 1\n")
+	csv = (
+		project
+		/ "model_outputs"
+		/ "model_outputs_iteration_1"
+		/ "skellyclicker_machine_labels_iteration_1.csv"
+	)
+	csv.parent.mkdir(parents=True)
+	csv.write_text("video,frame,nose_x,nose_y\n")
+
+	fresh_store.session.dlc_project_path = str(project)
+	fresh_store.session.machine_labels_path = None
+	session = fresh_store.get_session()
+	assert session.machine_labels_path is None
+
+
 def test_finalize_clears_stale_video_folder_machine_labels(fresh_store, tmp_path):
 	"""New/unanalyzed project must not keep a CSV from beside the videos."""
 	project = tmp_path / "new_proj"
@@ -245,6 +266,42 @@ def test_finalize_clears_stale_video_folder_machine_labels(fresh_store, tmp_path
 	fresh_store.session.machine_labels_path = str(stale)
 	session = fresh_store.get_session()
 	assert session.machine_labels_path is None
+
+
+def test_load_dlc_project_clears_prior_machine_labels(fresh_store, tmp_path, monkeypatch):
+	"""Switching projects must not keep the previous machine CSV in assets."""
+	project = tmp_path / "proj"
+	project.mkdir()
+	config = project / "config.yaml"
+	config.write_text("Task: t\niteration: 0\n")
+
+	class _Fake:
+		iteration = 0
+		tracked_point_names = ["nose"]
+		project_config_path = str(config)
+
+	# Avoid importing deeplabcut in unit tests — stub the handler load path.
+	import types
+	import sys
+
+	fake_mod = types.ModuleType("skellyclicker.core.deeplabcut_handler.deeplabcut_handler")
+
+	class DeeplabcutHandler:
+		@classmethod
+		def load_deeplabcut_project(cls, project_config_path: str):
+			return _Fake()
+
+	fake_mod.DeeplabcutHandler = DeeplabcutHandler
+	monkeypatch.setitem(
+		sys.modules,
+		"skellyclicker.core.deeplabcut_handler.deeplabcut_handler",
+		fake_mod,
+	)
+	fresh_store.session.machine_labels_path = "/tmp/old_machine.csv"
+	# Also stub live-inference so load does not need a real model tree.
+	monkeypatch.setattr(fresh_store, "_ensure_live_inference", lambda: None)
+	fresh_store.load_dlc_project(str(project))
+	assert fresh_store.session.machine_labels_path is None
 
 
 def test_ensure_live_inference_skips_without_trained_weights(fresh_store, tmp_path):

@@ -38,12 +38,17 @@ class SessionStore:
 		return self._finalize_session()
 
 	def _sync_machine_labels_path_to_latest(self) -> None:
-		"""Point session at the newest machine-labels CSV under the loaded DLC project.
+		"""Keep an existing machine-labels path consistent with the loaded DLC project.
 
-		Search the project tree only — never video-folder leftovers from a previous
-		project on the same videos (those can show the wrong bodypart count).
+		Do not invent a path when the session has none — otherwise leftover CSVs
+		under a project (or after Create DLC / New Session) keep reappearing in
+		Loaded Assets. Analyze / Import set the path explicitly.
 		"""
 		if not self.session.dlc_project_path:
+			return
+		current = self.session.machine_labels_path
+		if not current:
+			# Explicitly cleared or never set — leave empty.
 			return
 		try:
 			project_dir, config_path = resolve_dlc_project_input(
@@ -51,18 +56,20 @@ class SessionStore:
 			)
 		except ValueError:
 			return
-		# video_paths=None: do not pick up *_model_outputs next to videos.
+		try:
+			Path(current).expanduser().resolve().relative_to(project_dir.resolve())
+			in_project = True
+		except (ValueError, OSError):
+			in_project = False
+		if not in_project:
+			# Stale path from a previous project / video-folder leftover.
+			self.session.machine_labels_path = None
+			return
+		# Still under this project: prefer the newest iteration CSV if one exists.
 		latest = resolve_latest_machine_labels_path(str(config_path), video_paths=None)
 		if latest is not None:
 			self.session.machine_labels_path = str(latest)
-			return
-		# No project-local CSV: drop a stale path that lives outside this project.
-		current = self.session.machine_labels_path
-		if not current:
-			return
-		try:
-			Path(current).expanduser().resolve().relative_to(project_dir.resolve())
-		except (ValueError, OSError):
+		elif not Path(current).expanduser().is_file():
 			self.session.machine_labels_path = None
 
 	def _finalize_session(self) -> AppSession:
@@ -529,6 +536,9 @@ class SessionStore:
 		self._sync_dlc_iteration_from_handler()
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
+		# Loading a project must not keep another project's machine CSV in Loaded Assets.
+		# Full Analysis / Import Machine Labels set this path when needed.
+		self.session.machine_labels_path = None
 		# Warm live runners only if this project has trained weights; else clear.
 		self._ensure_live_inference()
 		return self._finalize_session()
