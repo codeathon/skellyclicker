@@ -720,6 +720,17 @@ button:disabled {
   gap: 0.2rem;
 }
 
+.labeling-video-select {
+  width: 100%;
+  margin-top: 0.15rem;
+  padding: 0.35rem 0.4rem;
+  font: inherit;
+  color: #e8eef7;
+  background: #0f141c;
+  border: 1px solid #2a3441;
+  border-radius: 4px;
+}
+
 .labeling-hud-section--help {
   margin-top: auto;
 }

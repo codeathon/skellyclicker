@@ -1,5 +1,7 @@
 """Tests for web session store lifecycle (Phase A regressions)."""
 
+from pathlib import Path
+
 import pytest
 
 from skellyclicker.services.session_store import SessionStore

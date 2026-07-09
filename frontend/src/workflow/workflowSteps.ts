@@ -98,7 +98,8 @@ function firstIncompleteStep(session: AppSession): StepId {
 const NEXT_COPY: Record<StepId, { title: string; detail: string }> = {
 	videos: {
 		title: "Add videos",
-		detail: "Use Add Videos to load your training recordings (same folder for multi-camera).",
+		detail:
+			"Add synchronized cameras (same frame count → grid labeler) or separate experiment videos (different lengths → one video at a time).",
 	},
 	dlc: {
 		title: "Create a DLC project",

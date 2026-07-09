@@ -4,11 +4,15 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from skellyclicker.core.session_validation import bodypart_names_from_csv_columns
+from skellyclicker.core.session_validation import (
+	bodypart_names_from_csv_columns,
+	validate_label_csv_against_videos,
+)
 from skellyclicker.services.dlc_job_runner import DLCJobRunner
 from skellyclicker.services.errors import SessionConflictError, SessionError
 from skellyclicker.services.labeling_engine import LabelingEngine
-from skellyclicker.services.models import AppSession, BackgroundJob, WorkflowState
+from skellyclicker.services.labeling_mode import detect_labeling_mode
+from skellyclicker.services.models import AppSession, BackgroundJob, LabelingMode, WorkflowState
 from skellyclicker.services.session_paths import collect_asset_path_checks
 from skellyclicker.services.workflow import refresh_workflow_state
 
@@ -95,15 +99,38 @@ class SessionStore:
 			resolved.append(str(p.resolve()))
 		return resolved
 
+	def _refresh_labeling_mode(self, paths: list[str]) -> None:
+		"""Auto-pick synced vs corpus from frame counts; keep active video if still valid."""
+		if not paths:
+			self.session.labeling_mode = LabelingMode.single
+			self.session.active_video_path = None
+			return
+		try:
+			mode = detect_labeling_mode(paths)
+		except ValueError:
+			# Unreadable/corrupt files: don't block add/remove; prefer one-at-a-time.
+			mode = LabelingMode.corpus if len(paths) > 1 else LabelingMode.single
+		self.session.labeling_mode = mode
+		if mode == LabelingMode.synced:
+			self.session.active_video_path = None
+			return
+		# Single / corpus: keep current active video when still in the set.
+		active = self.session.active_video_path
+		if active and active in paths:
+			return
+		self.session.active_video_path = paths[0]
+
 	def _apply_videos(self, paths: list[str]) -> None:
 		"""Store video list and reset frame stats; close labeler if video set changed."""
 		if paths != (self.session.videos or []):
 			self._teardown_labeler()
 		self.session.videos = paths if paths else None
 		self.session.frame_count = 0
+		self._refresh_labeling_mode(paths)
 		if paths:
 			self.session.workflow_state = WorkflowState.ready_to_label
-			self.session.status_message = f"{len(paths)} video(s) selected"
+			mode = self.session.labeling_mode.value
+			self.session.status_message = f"{len(paths)} video(s) selected ({mode})"
 		else:
 			self.session.status_message = "No videos selected"
 
@@ -145,6 +172,11 @@ class SessionStore:
 		df = pd.read_csv(path)
 		self.session.human_labels_path = path
 		self.session.tracked_point_names = bodypart_names_from_csv_columns(list(df.columns))
+		# Warn when CSV video names don't match the session set (corpus / multi-cam).
+		if self.session.videos:
+			warnings = validate_label_csv_against_videos(path, self.session.videos)
+			if warnings:
+				self.session.status_message = "; ".join(warnings)
 		return self._finalize_session()
 
 	def set_machine_labels_path(self, path: str) -> AppSession:
@@ -212,6 +244,21 @@ class SessionStore:
 			self.session.dlc_project_path and self.session.tracked_point_names
 		)
 
+	def _labeler_video_paths(self) -> list[str]:
+		"""Videos to open in the labeler: all (synced) or one active (single/corpus)."""
+		videos = list(self.session.videos or [])
+		if not videos:
+			raise SessionError("Select videos first")
+		# Re-detect in case session JSON was loaded with a stale mode.
+		self._refresh_labeling_mode(videos)
+		if self.session.labeling_mode == LabelingMode.synced:
+			return videos
+		active = self.session.active_video_path or videos[0]
+		if active not in videos:
+			raise SessionError(f"Active video not in session: {active}")
+		self.session.active_video_path = active
+		return [active]
+
 	def open_labeler(self) -> AppSession:
 		self._assert_no_active_job()
 		if not self.session.videos:
@@ -222,13 +269,17 @@ class SessionStore:
 				"to define bodyparts before opening the labeler."
 			)
 		self._teardown_labeler()
+		open_paths = self._labeler_video_paths()
 		engine = LabelingEngine.open(
-			video_paths=self.session.videos,
+			video_paths=open_paths,
 			human_labels_path=self.session.human_labels_path,
 			machine_labels_path=self.session.machine_labels_path,
 			# Web labeler always edits human labels; machine CSV is overlay-only.
 			train_on_machine_labels=False,
 			tracked_point_names=list(self.session.tracked_point_names),
+			labeling_mode=self.session.labeling_mode,
+			session_video_paths=list(self.session.videos),
+			active_video_path=self.session.active_video_path,
 		)
 		self.labeling_engine = engine
 		self.session.labeling_session_id = engine.session_id
@@ -237,8 +288,42 @@ class SessionStore:
 			engine.video_handler.data_handler.config.tracked_point_names
 		)
 		self.session.workflow_state = WorkflowState.labeling
-		self.session.status_message = "Labeling"
+		mode = self.session.labeling_mode
+		if mode == LabelingMode.synced:
+			self.session.status_message = f"Labeling ({len(open_paths)} cameras · shared timeline)"
+		elif mode == LabelingMode.corpus:
+			name = Path(open_paths[0]).name
+			self.session.status_message = (
+				f"Labeling ({len(self.session.videos)} videos · {name})"
+			)
+		else:
+			self.session.status_message = "Labeling"
 		return self.session
+
+	def set_active_labeling_video(self, video_path: str) -> AppSession:
+		"""Switch the corpus/single labeler to another session video (merge-save first)."""
+		if not self.labeling_engine:
+			raise SessionError("Labeler is not open")
+		if self.session.labeling_mode == LabelingMode.synced:
+			raise SessionError("Active video selection is only for per-video labeling")
+		videos = list(self.session.videos or [])
+		resolved = str(Path(video_path).expanduser().resolve())
+		if resolved not in videos:
+			# Also accept basename match for convenience from the UI.
+			by_name = {Path(p).name: p for p in videos}
+			resolved = by_name.get(Path(video_path).name, "")
+			if not resolved:
+				raise SessionError(f"Video not in session: {video_path}")
+		if resolved == self.session.active_video_path:
+			return self.session
+		# Persist current video's labels into the corpus CSV before switching.
+		if self.session.human_labels_path:
+			self.save_labeler(self.session.human_labels_path)
+		else:
+			self.save_labeler(None)
+		self.session.active_video_path = resolved
+		self._teardown_labeler()
+		return self.open_labeler()
 
 	def _labeled_frame_count(self, engine) -> int:
 		handler = engine.video_handler.data_handler
@@ -376,6 +461,12 @@ class SessionStore:
 		data = json.loads(target.read_text())
 		self.session = AppSession.model_validate(data)
 		self.session.session_saved_path = str(target.resolve())
+		# Re-detect mode from current video files (stale session JSON is OK).
+		if self.session.videos:
+			try:
+				self._refresh_labeling_mode(list(self.session.videos))
+			except SessionError:
+				pass
 		if self.session.dlc_project_path:
 			from skellyclicker.core.deeplabcut_handler.deeplabcut_handler import (
 				DeeplabcutHandler,

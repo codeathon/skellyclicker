@@ -270,6 +270,14 @@ export default function App() {
               <div className={stepGroupClass(["videos"])}>
                 <h3>Videos</h3>
                 {session.videos?.length ? (
+                  <>
+                    <p className="hint inline-hint">
+                      {session.labeling_mode === "synced"
+                        ? `${session.videos.length} cameras · shared timeline (grid)`
+                        : session.labeling_mode === "corpus"
+                          ? `${session.videos.length} videos · label one at a time`
+                          : "1 video"}
+                    </p>
                   <ul className="video-list">
                     {session.videos.map((p) => {
                       const name = p.split(/[/\\]/).pop() ?? p;
@@ -289,9 +297,11 @@ export default function App() {
                       );
                     })}
                   </ul>
+                  </>
                 ) : (
                   <p className="hint inline-hint">
-                    Multi-camera: add each view (same folder for training).
+                    Add synchronized cameras (same length → grid) or separate
+                    experiment videos (different lengths → one at a time).
                   </p>
                 )}
                 <button
