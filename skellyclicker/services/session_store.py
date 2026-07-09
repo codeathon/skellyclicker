@@ -18,7 +18,6 @@ from skellyclicker.services.workflow import refresh_workflow_state
 
 from skellyclicker.services.dlc_paths import (
 	resolve_dlc_project_input,
-	resolve_latest_machine_labels_path,
 )
 
 
@@ -38,38 +37,29 @@ class SessionStore:
 		return self._finalize_session()
 
 	def _sync_machine_labels_path_to_latest(self) -> None:
-		"""Keep an existing machine-labels path consistent with the loaded DLC project.
+		"""Validate an existing machine-labels path; never invent one from disk.
 
-		Do not invent a path when the session has none — otherwise leftover CSVs
-		under a project (or after Create DLC / New Session) keep reappearing in
-		Loaded Assets. Analyze / Import set the path explicitly.
+		Loaded Assets must stay empty until Full Analysis or Import Machine Labels
+		sets ``machine_labels_path``. Do not upgrade/replace an existing path by
+		scanning the project tree — that re-surfaces leftover CSVs.
 		"""
-		if not self.session.dlc_project_path:
-			return
 		current = self.session.machine_labels_path
 		if not current:
-			# Explicitly cleared or never set — leave empty.
+			return
+		# Drop missing files so the UI does not show a dead path.
+		if not Path(current).expanduser().is_file():
+			self.session.machine_labels_path = None
+			return
+		if not self.session.dlc_project_path:
 			return
 		try:
-			project_dir, config_path = resolve_dlc_project_input(
-				self.session.dlc_project_path
-			)
+			project_dir, _ = resolve_dlc_project_input(self.session.dlc_project_path)
 		except ValueError:
 			return
 		try:
 			Path(current).expanduser().resolve().relative_to(project_dir.resolve())
-			in_project = True
 		except (ValueError, OSError):
-			in_project = False
-		if not in_project:
-			# Stale path from a previous project / video-folder leftover.
-			self.session.machine_labels_path = None
-			return
-		# Still under this project: prefer the newest iteration CSV if one exists.
-		latest = resolve_latest_machine_labels_path(str(config_path), video_paths=None)
-		if latest is not None:
-			self.session.machine_labels_path = str(latest)
-		elif not Path(current).expanduser().is_file():
+			# Path is outside the loaded project (e.g. video-folder leftover).
 			self.session.machine_labels_path = None
 
 	def _finalize_session(self) -> AppSession:
@@ -190,6 +180,9 @@ class SessionStore:
 		"""Store video list and reset frame stats; close labeler if video set changed."""
 		if paths != (self.session.videos or []):
 			self._teardown_labeler()
+			# Changing videos must not keep a previous analyze CSV in Loaded Assets.
+			# Full Analysis / Import Machine Labels set the path when a file is produced.
+			self.session.machine_labels_path = None
 		self.session.videos = paths if paths else None
 		self.session.frame_count = 0
 		self._refresh_labeling_mode(paths)
@@ -203,7 +196,7 @@ class SessionStore:
 	def set_videos(self, paths: list[str]) -> AppSession:
 		self._assert_no_active_job()
 		self._apply_videos(self._validate_video_paths(paths))
-		return self.session
+		return self._finalize_session()
 
 	def add_videos(self, paths: list[str]) -> AppSession:
 		"""Append videos to the session list (deduplicated, order preserved)."""
@@ -216,7 +209,7 @@ class SessionStore:
 				existing.append(path)
 				seen.add(path)
 		self._apply_videos(existing)
-		return self.session
+		return self._finalize_session()
 
 	def remove_video(self, path: str) -> AppSession:
 		"""Drop one video from the session list."""
