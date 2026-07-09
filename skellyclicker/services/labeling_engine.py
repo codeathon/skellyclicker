@@ -212,20 +212,23 @@ class LabelingEngine(BaseModel):
 		# Draw from the in-memory LRU only — do not merge into machine_labels_handler/CSV.
 		self.video_handler.live_points_lookup = service.get_cached
 
+	def _live_infer_video_path(self) -> str | None:
+		"""Active video path for live scrub infer (corpus/single)."""
+		if self.labeling_mode == LabelingMode.synced:
+			return None
+		if self.active_video_path:
+			return self.active_video_path
+		paths = list(self.video_handler.videos.keys())
+		return paths[0] if paths else None
+
 	def _maybe_request_live_infer(self, frame_number: int) -> None:
 		"""Kick coalesced background infer for the active video when CSV has no row."""
 		service = self._live_inference
 		if service is None or not service.ready:
 			return
-		# v1: single-video / corpus only — synced multi-cam deferred (N× cost).
-		if self.labeling_mode == LabelingMode.synced:
-			return
-		video_path = self.active_video_path
+		video_path = self._live_infer_video_path()
 		if not video_path:
-			paths = list(self.video_handler.videos.keys())
-			if not paths:
-				return
-			video_path = paths[0]
+			return
 		video_name = Path(video_path).name
 		if service.get_cached(video_name, frame_number) is not None:
 			return
@@ -235,6 +238,23 @@ class LabelingEngine(BaseModel):
 		if mlh is not None and mlh.get_data_by_video_frame(0, frame_number):
 			return
 		service.request_infer(video_path, frame_number)
+
+	def _wait_briefly_for_live_cache(self, frame_number: int, *, timeout_s: float = 0.18) -> None:
+		"""On committed frames, wait briefly so the first paint can include live crosses."""
+		import time
+
+		service = self._live_inference
+		video_path = self._live_infer_video_path()
+		if service is None or not service.ready or not video_path:
+			return
+		video_name = Path(video_path).name
+		if service.get_cached(video_name, frame_number) is not None:
+			return
+		deadline = time.monotonic() + timeout_s
+		while time.monotonic() < deadline:
+			if service.get_cached(video_name, frame_number) is not None:
+				return
+			time.sleep(0.01)
 
 	def render_frame_jpeg(
 		self,
@@ -275,6 +295,8 @@ class LabelingEngine(BaseModel):
 						self.video_handler.ensure_machine_labels_loaded()
 					if has_live:
 						self._maybe_request_live_infer(render_at)
+						# Brief wait so release-scrub paint often includes the guide.
+						self._wait_briefly_for_live_cache(render_at)
 				self._sync_annotator_overlay_flags()
 				image = self.video_handler.create_grid_image(
 					render_at,

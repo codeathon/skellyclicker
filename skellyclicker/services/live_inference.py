@@ -15,7 +15,12 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Keep recent scrub predictions without unbounded GPU/CPU memory growth.
-DEFAULT_CACHE_SIZE = 128
+DEFAULT_CACHE_SIZE = 256
+# Downscale long side before DLC — big win for scrub latency; coords scaled back.
+LIVE_INFER_MAX_SIDE = 512
+# Prefer sequential reads when scrubbing nearby frames (cheaper than random seek).
+_SEQUENTIAL_SEEK_MAX_GAP = 8
+
 
 ProgressCallback = Callable[[float | None, str], None]
 
@@ -27,18 +32,29 @@ class LiveInferenceService:
 	inference so scrub can request the latest frame without blocking every tick.
 	"""
 
-	def __init__(self, *, cache_size: int = DEFAULT_CACHE_SIZE) -> None:
+	def __init__(
+		self,
+		*,
+		cache_size: int = DEFAULT_CACHE_SIZE,
+		max_side: int = LIVE_INFER_MAX_SIDE,
+	) -> None:
 		self._lock = threading.RLock()
+		self._cap_lock = threading.Lock()
 		self._cache: OrderedDict[tuple[str, int], dict[str, tuple[float, float]]] = (
 			OrderedDict()
 		)
 		self._cache_size = max(int(cache_size), 1)
+		self._max_side = max(int(max_side), 64)
 		self._pose_runner: Any | None = None
 		self._detector_runner: Any | None = None
 		self._bodyparts: list[str] = []
 		self._config_path: str | None = None
 		self._ready = False
 		self._load_error: str | None = None
+		# Reused capture — opening per frame dominated scrub latency.
+		self._cap: cv2.VideoCapture | None = None
+		self._cap_path: str | None = None
+		self._cap_frame_index: int | None = None
 		# Coalesced background work: only the newest pending request runs.
 		self._pending: tuple[str, int] | None = None
 		self._worker: threading.Thread | None = None
@@ -78,6 +94,7 @@ class LiveInferenceService:
 			self._detector_runner = None
 			self._bodyparts = []
 			self._cache.clear()
+		self._close_capture()
 
 		try:
 			self._load_runners(project_config_path, batch_size=batch_size)
@@ -169,11 +186,20 @@ class LiveInferenceService:
 			self._ready = True
 			self._load_error = None
 		logger.info(
-			"Live inference ready (%s, %d bodyparts, iteration %s)",
+			"Live inference ready (%s, %d bodyparts, iteration %s, max_side=%d)",
 			pose_task,
 			len(bodyparts),
 			analyze_iteration,
+			self._max_side,
 		)
+
+	def _close_capture(self) -> None:
+		with self._cap_lock:
+			if self._cap is not None:
+				self._cap.release()
+			self._cap = None
+			self._cap_path = None
+			self._cap_frame_index = None
 
 	def close(self) -> None:
 		with self._lock:
@@ -185,6 +211,7 @@ class LiveInferenceService:
 			self._ready = False
 			self._config_path = None
 			self._on_result = None
+		self._close_capture()
 
 	def get_cached(
 		self, video_name: str, frame_number: int
@@ -222,27 +249,79 @@ class LiveInferenceService:
 			pose_runner = self._pose_runner
 			detector_runner = self._detector_runner
 			bodyparts = list(self._bodyparts)
+			max_side = self._max_side
 
 		frame = self._read_frame(video_path, frame_number)
-		points = self._run_inference(frame, pose_runner, detector_runner, bodyparts)
+		points = self._run_inference(
+			frame, pose_runner, detector_runner, bodyparts, max_side=max_side
+		)
 		self._store_cache(Path(video_path).name, frame_number, points)
 		return points
 
-	@staticmethod
-	def _read_frame(video_path: str, frame_number: int) -> np.ndarray:
-		cap = cv2.VideoCapture(str(video_path))
-		if not cap.isOpened():
-			raise FileNotFoundError(f"Could not open video for live inference: {video_path}")
-		try:
-			cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_number))
+	def _read_frame(self, video_path: str, frame_number: int) -> np.ndarray:
+		"""Read one frame, reusing an open capture and cheap sequential seeks."""
+		path = str(video_path)
+		target = int(frame_number)
+		with self._cap_lock:
+			if self._cap is None or self._cap_path != path:
+				if self._cap is not None:
+					self._cap.release()
+				cap = cv2.VideoCapture(path)
+				if not cap.isOpened():
+					self._cap = None
+					self._cap_path = None
+					self._cap_frame_index = None
+					raise FileNotFoundError(
+						f"Could not open video for live inference: {video_path}"
+					)
+				self._cap = cap
+				self._cap_path = path
+				self._cap_frame_index = None
+
+			cap = self._cap
+			assert cap is not None
+			pos = self._cap_frame_index
+			# Next frame after last read → one grab; small forward gap → skip; else seek.
+			if pos is not None and target == pos + 1:
+				pass
+			elif (
+				pos is not None
+				and target > pos
+				and target - pos <= _SEQUENTIAL_SEEK_MAX_GAP
+			):
+				for _ in range(target - pos - 1):
+					if not cap.grab():
+						break
+			else:
+				cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+
 			ok, frame = cap.read()
 			if not ok or frame is None:
+				# One retry with a hard seek — some codecs fail after grab skips.
+				cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+				ok, frame = cap.read()
+			if not ok or frame is None:
+				self._cap_frame_index = None
 				raise RuntimeError(
 					f"Could not read frame {frame_number} from {video_path}"
 				)
+			self._cap_frame_index = target
 			return frame
-		finally:
-			cap.release()
+
+	@staticmethod
+	def _prepare_infer_image(
+		frame_bgr: np.ndarray, max_side: int
+	) -> tuple[np.ndarray, float]:
+		"""RGB image for DLC plus scale factor to map coords back to full frame."""
+		h, w = frame_bgr.shape[:2]
+		scale = 1.0
+		if max(h, w) > max_side:
+			scale = max_side / float(max(h, w))
+			new_w = max(1, int(round(w * scale)))
+			new_h = max(1, int(round(h * scale)))
+			frame_bgr = cv2.resize(frame_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+		frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+		return frame_rgb, scale
 
 	@staticmethod
 	def _run_inference(
@@ -250,9 +329,10 @@ class LiveInferenceService:
 		pose_runner: Any,
 		detector_runner: Any | None,
 		bodyparts: list[str],
+		*,
+		max_side: int = LIVE_INFER_MAX_SIDE,
 	) -> dict[str, tuple[float, float]]:
-		# DLC runners expect RGB images (same as VideoIterator path).
-		frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+		frame_rgb, scale = LiveInferenceService._prepare_infer_image(frame_bgr, max_side)
 		if detector_runner is not None:
 			det = detector_runner.inference([frame_rgb])
 			bboxes = det[0].get("bboxes") if det else None
@@ -263,7 +343,12 @@ class LiveInferenceService:
 			predictions = pose_runner.inference([frame_rgb])
 		if not predictions:
 			return {}
-		return LiveInferenceService._prediction_to_points(predictions[0], bodyparts)
+		points = LiveInferenceService._prediction_to_points(predictions[0], bodyparts)
+		if scale == 1.0:
+			return points
+		# Map downscaled predictions back to native video coordinates for overlay.
+		inv = 1.0 / scale
+		return {bp: (x * inv, y * inv) for bp, (x, y) in points.items()}
 
 	@staticmethod
 	def _prediction_to_points(

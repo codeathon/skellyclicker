@@ -62,6 +62,32 @@ def test_request_infer_coalesces_to_latest_frame():
 	assert all(f in (1, 2, 3) for _, f in calls)
 
 
+def test_prepare_infer_image_downscales_and_reports_scale():
+	frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+	rgb, scale = LiveInferenceService._prepare_infer_image(frame, max_side=512)
+	assert rgb.shape[0] == 288  # 1080 * (512/1920)
+	assert rgb.shape[1] == 512
+	assert abs(scale - (512 / 1920)) < 1e-6
+
+
+def test_run_inference_scales_points_back_to_native(monkeypatch):
+	svc = LiveInferenceService(max_side=512)
+	frame = np.zeros((1000, 1000, 3), dtype=np.uint8)
+
+	class _Runner:
+		def inference(self, _batch):
+			# Coordinates in downscaled space (max_side=512 → scale 0.512).
+			return [{"bodyparts": np.array([[100.0, 50.0, 0.9]], dtype=float)}]
+
+	points = LiveInferenceService._run_inference(
+		frame, _Runner(), None, ["nose"], max_side=512
+	)
+	assert "nose" in points
+	x, y = points["nose"]
+	assert abs(x - 100.0 / 0.512) < 1e-3
+	assert abs(y - 50.0 / 0.512) < 1e-3
+
+
 def test_live_cache_is_display_only_not_csv_handler():
 	"""Live predictions live in the service LRU — never require DataHandler upsert."""
 	svc = LiveInferenceService()

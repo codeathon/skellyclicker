@@ -36,6 +36,8 @@ Press Space to play or pause frames.
 Press 'u' or Ctrl+Z to undo the last label (or clear active label on frame).`;
 
 const PLAY_INTERVAL_MS = 66;
+/** After scrub release, repaint a few times so late live-infer crosses appear. */
+const LIVE_OVERLAY_RETRY_MS = [120, 280, 500];
 
 function formatPointList(points: string[]): string {
 	return `[${points.join(", ")}]`;
@@ -102,10 +104,12 @@ export function LabelingCanvas({
 	const stageRef = useRef<HTMLDivElement>(null);
 	const frameRef = useRef(0);
 	const scrubRafRef = useRef<number | null>(null);
+	const liveOverlayTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 	const pendingPreviewFrameRef = useRef<number | null>(null);
 	const previewBusyRef = useRef(false);
 	const scrubbingRef = useRef(false);
 	const previewGenRef = useRef(0);
+	const stateRef = useRef<LabelingState | null>(null);
 	// Prevent Esc / double-click from starting a second close while the save dialog is open.
 	const closingRef = useRef(false);
 	const [scrubbing, setScrubbing] = useState(false);
@@ -118,6 +122,10 @@ export function LabelingCanvas({
 	useEffect(() => {
 		labelsPathRef.current = humanLabelsPath;
 	}, [humanLabelsPath]);
+
+	useEffect(() => {
+		stateRef.current = state;
+	}, [state]);
 
 	const fitCanvasToStage = useCallback(() => {
 		const stage = stageRef.current;
@@ -194,8 +202,33 @@ export function LabelingCanvas({
 		[paintFrameBlob],
 	);
 
+	const clearLiveOverlayRetries = useCallback(() => {
+		for (const id of liveOverlayTimersRef.current) clearTimeout(id);
+		liveOverlayTimersRef.current = [];
+	}, []);
+
+	const scheduleLiveOverlayRetries = useCallback(
+		(frameNumber: number, gen: number) => {
+			clearLiveOverlayRetries();
+			if (!stateRef.current?.live_inference_ready) return;
+			for (const delay of LIVE_OVERLAY_RETRY_MS) {
+				const id = setTimeout(() => {
+					if (gen !== previewGenRef.current) return;
+					if (scrubbingRef.current || playingRef.current) return;
+					if (frameRef.current !== frameNumber) return;
+					void fetchAndPaintFrame(frameNumber, false, gen).catch(() => {
+						/* ignore — next retry or user action will refresh */
+					});
+				}, delay);
+				liveOverlayTimersRef.current.push(id);
+			}
+		},
+		[clearLiveOverlayRetries, fetchAndPaintFrame],
+	);
+
 	const loadFrame = useCallback(
 		async (frameNumber: number) => {
+			clearLiveOverlayRetries();
 			const gen = ++previewGenRef.current;
 			pendingPreviewFrameRef.current = null;
 			const s = await client.setFrame(frameNumber);
@@ -204,8 +237,11 @@ export function LabelingCanvas({
 			setSliderFrame(s.frame_number);
 			setState(s);
 			await fetchAndPaintFrame(s.frame_number, false, gen);
+			if (gen === previewGenRef.current) {
+				scheduleLiveOverlayRetries(s.frame_number, gen);
+			}
 		},
-		[fetchAndPaintFrame],
+		[fetchAndPaintFrame, clearLiveOverlayRetries, scheduleLiveOverlayRetries],
 	);
 
 	const stopPlaying = useCallback(
@@ -320,7 +356,6 @@ export function LabelingCanvas({
 		(frameNumber: number) => {
 			scrubbingRef.current = false;
 			setScrubbing(false);
-			previewGenRef.current += 1;
 			pendingPreviewFrameRef.current = null;
 			void loadFrame(frameNumber).catch((err) => {
 				if (isIgnorableFetchError(err)) return;
@@ -347,11 +382,12 @@ export function LabelingCanvas({
 		return () => {
 			previewGenRef.current += 1;
 			pendingPreviewFrameRef.current = null;
+			clearLiveOverlayRetries();
 			if (scrubRafRef.current != null) cancelAnimationFrame(scrubRafRef.current);
 			if (playTimerRef.current != null) clearInterval(playTimerRef.current);
 			playingRef.current = false;
 		};
-	}, [refresh]);
+	}, [refresh, clearLiveOverlayRetries]);
 
 	useEffect(() => {
 		frameCountRef.current = state?.frame_count ?? 0;
