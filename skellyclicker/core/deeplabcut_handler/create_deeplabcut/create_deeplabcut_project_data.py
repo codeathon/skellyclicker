@@ -50,84 +50,108 @@ def get_session_name(path_to_videos_for_training: str) -> str:
     )
 
 
-def fill_in_labelled_data_folder(path_to_videos_for_training: str,
-                                 path_to_dlc_project_folder: str,
-                                 path_to_image_labels_csv: str,
-                                 scorer_name: str = HUMAN_EXPERIMENTER_NAME
-                                 ):
-    labels_dataframe = pd.read_csv(path_to_image_labels_csv)
-    per_video_dataframe = dict(
-        tuple(labels_dataframe.groupby("video")))  # create dataframe per video (to simplify indexing below)
+def fill_in_labelled_data_folder(
+	path_to_videos_for_training: str,
+	path_to_dlc_project_folder: str,
+	path_to_image_labels_csv: str,
+	scorer_name: str = HUMAN_EXPERIMENTER_NAME,
+	video_paths: list[str] | None = None,
+):
+	"""Extract labeled frames into DLC labeled-data folders.
 
-    header_df, joint_names = build_dlc_formatted_header(labels_dataframe=labels_dataframe, scorer_name=scorer_name)
+	When ``video_paths`` is provided, each CSV ``video`` basename is resolved via
+	the session path registry (videos may live in different folders). Otherwise
+	falls back to ``{path_to_videos_for_training}/{video_name}`` (legacy).
+	"""
+	from skellyclicker.services.video_path_registry import (
+		labeled_data_prefix,
+		resolve_video_path,
+	)
 
-    labeled_frames_per_video = {}
-    for video_name, video_df in per_video_dataframe.items():
-        video_name_wo_extension = str(video_name).split('.')[0]
-        session_name = get_session_name(path_to_videos_for_training)
-        combined_name = f"{session_name}_{video_name_wo_extension}"
-        dlc_video_folder_path = Path(path_to_dlc_project_folder) / 'labeled-data' / combined_name
-        if dlc_video_folder_path.exists():
-            shutil.rmtree(dlc_video_folder_path)
-        dlc_video_folder_path.mkdir(parents=True)
+	labels_dataframe = pd.read_csv(path_to_image_labels_csv)
+	per_video_dataframe = dict(
+		tuple(labels_dataframe.groupby("video"))
+	)  # create dataframe per video (to simplify indexing below)
 
-        video_path = Path(path_to_videos_for_training) / f"{video_name}"
-        if not video_path.exists():
-            raise FileNotFoundError(f"Video file not found: {video_path}")
+	header_df, joint_names = build_dlc_formatted_header(
+		labels_dataframe=labels_dataframe, scorer_name=scorer_name
+	)
 
-        cap = cv2.VideoCapture(str(video_path))
-        labeled_frames = []
+	labeled_frames_per_video = {}
+	for video_name, video_df in per_video_dataframe.items():
+		video_name_wo_extension = str(video_name).split(".")[0]
+		if video_paths is not None:
+			video_path = Path(resolve_video_path(str(video_name), video_paths))
+			session_name = labeled_data_prefix(str(video_path))
+		else:
+			session_name = get_session_name(path_to_videos_for_training)
+			video_path = Path(path_to_videos_for_training) / f"{video_name}"
+		combined_name = f"{session_name}_{video_name_wo_extension}"
+		dlc_video_folder_path = (
+			Path(path_to_dlc_project_folder) / "labeled-data" / combined_name
+		)
+		if dlc_video_folder_path.exists():
+			shutil.rmtree(dlc_video_folder_path)
+		dlc_video_folder_path.mkdir(parents=True)
 
-        # Initialize a DataFrame with the MultiIndex structure
-        df = header_df.copy()
+		if not video_path.exists():
+			raise FileNotFoundError(f"Video file not found: {video_path}")
 
-        logger.info(f'Looking for labeled frames for {video_path}')
+		cap = cv2.VideoCapture(str(video_path))
+		labeled_frames = []
 
-        labeled_rows = video_df[~video_df.iloc[:, 2:].isna().all(axis=1)]
-        for _, row in labeled_rows.iterrows():
-            frame_number = int(row["frame"])
+		# Initialize a DataFrame with the MultiIndex structure
+		df = header_df.copy()
 
-            # Seek to the exact frame — must match skellyclicker's cap.set()/cap.read() behavior
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-            ret, frame = cap.read()
-            if not ret:
-                logger.warning(f"Could not read frame {frame_number} from {video_path}, skipping")
-                continue
+		logger.info(f"Looking for labeled frames for {video_path}")
 
-            labeled_frames.append(frame_number)
+		labeled_rows = video_df[~video_df.iloc[:, 2:].isna().all(axis=1)]
+		for _, row in labeled_rows.iterrows():
+			frame_number = int(row["frame"])
 
-            image_name = f'img{frame_number:05d}.png'
-            image_save_path = dlc_video_folder_path / image_name
-            # Always overwrite: stale images from prior iterations must not persist
-            cv2.imwrite(filename=str(image_save_path), img=frame)
+			# Seek to the exact frame — must match skellyclicker's cap.set()/cap.read() behavior
+			cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+			ret, frame = cap.read()
+			if not ret:
+				logger.warning(
+					f"Could not read frame {frame_number} from {video_path}, skipping"
+				)
+				continue
 
-            image_path = f"labeled-data/{combined_name}/{image_name}"
+			labeled_frames.append(frame_number)
 
-            frame_data = {}
-            for joint in joint_names:
-                frame_data[(scorer_name, joint, 'x')] = row[f"{joint}_x"]
-                frame_data[(scorer_name, joint, 'y')] = row[f"{joint}_y"]
+			image_name = f"img{frame_number:05d}.png"
+			image_save_path = dlc_video_folder_path / image_name
+			# Always overwrite: stale images from prior iterations must not persist
+			cv2.imwrite(filename=str(image_save_path), img=frame)
 
-            df.loc[image_path] = frame_data
+			image_path = f"labeled-data/{combined_name}/{image_name}"
 
-        cap.release()
+			frame_data = {}
+			for joint in joint_names:
+				frame_data[(scorer_name, joint, "x")] = row[f"{joint}_x"]
+				frame_data[(scorer_name, joint, "y")] = row[f"{joint}_y"]
 
-        # Save the CSV file 
-        output_csv_path = dlc_video_folder_path / f'CollectedData_{scorer_name}.csv'
-        df.to_csv(output_csv_path)
+			df.loc[image_path] = frame_data
 
-        # Save the H5 file
-        output_h5_path = dlc_video_folder_path / f'CollectedData_{scorer_name}.h5'
-        df.to_hdf(str(output_h5_path), key="df_with_missing", format="table", mode="w")
+		cap.release()
 
-        logger.info(f'Saved DLC formatted CSV to {output_csv_path}')
-        logger.info(f'Saved DLC formatted H5 to {output_h5_path}')
+		# Save the CSV file
+		output_csv_path = dlc_video_folder_path / f"CollectedData_{scorer_name}.csv"
+		df.to_csv(output_csv_path)
 
-        labeled_frames_per_video[video_name] = labeled_frames
+		# Save the H5 file
+		output_h5_path = dlc_video_folder_path / f"CollectedData_{scorer_name}.h5"
+		df.to_hdf(str(output_h5_path), key="df_with_missing", format="table", mode="w")
 
-    logger.info("\n=== Summary of Labeled Frames ===")
-    for video, frames in labeled_frames_per_video.items():
-        logger.info(f"{video}: {frames}")
+		logger.info(f"Saved DLC formatted CSV to {output_csv_path}")
+		logger.info(f"Saved DLC formatted H5 to {output_h5_path}")
+
+		labeled_frames_per_video[video_name] = labeled_frames
+
+	logger.info("\n=== Summary of Labeled Frames ===")
+	for video, frames in labeled_frames_per_video.items():
+		logger.info(f"{video}: {frames}")
 
 
 if __name__ == '__main__':

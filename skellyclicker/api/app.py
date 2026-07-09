@@ -85,6 +85,11 @@ class ActivePointBody(BaseModel):
 	point_name: str
 
 
+class ActiveVideoBody(BaseModel):
+	"""Switch corpus labeler to another session video (path or basename)."""
+	path: str
+
+
 class AnalyzeBody(BaseModel):
 	video_paths: list[str]
 	use_training_videos: bool = True
@@ -394,6 +399,15 @@ def set_active_point(body: ActivePointBody):
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
 	return store.labeling_engine.state_dict()
+
+
+@app.post("/api/labeling/active-video", response_model=AppSession)
+def set_active_labeling_video(body: ActiveVideoBody):
+	"""Corpus mode: save current video labels, reopen labeler on another video."""
+	try:
+		return store.set_active_labeling_video(body.path)
+	except SessionError as exc:
+		raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/labeling/undo")

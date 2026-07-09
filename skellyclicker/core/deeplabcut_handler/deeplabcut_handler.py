@@ -139,10 +139,12 @@ class DeeplabcutHandler(BaseModel):
         if training_config is None:
             training_config = DeeplabcutTrainingConfig()
 
-        video_folders = set(Path(video_path).parent for video_path in video_paths)
-        if len(video_folders) > 1:
-            raise ValueError("All videos must be in the same folder for training")
-        video_folder = video_folders.pop()
+        # Path registry allows videos in different folders (cross-experiment corpus).
+        from skellyclicker.services.video_path_registry import build_video_path_registry
+
+        registry = build_video_path_registry(video_paths)
+        # Legacy single-folder arg still used as fallback prefix when registry unused.
+        video_folder = Path(next(iter(registry.values()))).parent
 
         parent_directory = Path(self.project_config_path).parent
 
@@ -159,6 +161,7 @@ class DeeplabcutHandler(BaseModel):
             path_to_videos_for_training=str(video_folder),
             path_to_dlc_project_folder=str(parent_directory),
             path_to_image_labels_csv=labels_csv_path,
+            video_paths=video_paths,
         )
 
         report(0.15, f"Creating training dataset ({training_config.model_type})…")
@@ -256,10 +259,7 @@ class DeeplabcutHandler(BaseModel):
 
         csv_path = Path(output_folder) / f"skellyclicker_machine_labels_iteration_{analyze_iteration}.csv"
 
-        video_folders = set(Path(video_path).parent for video_path in video_paths)
-        if len(video_folders) > 1:
-            raise ValueError("All videos must be in the same folder for training")
-        
+        # Cross-folder analyze is allowed; merge still keys rows by video basename.
         config = auxiliaryfunctions.read_config(self.project_config_path)
         metadata = {
             "model_name": self.project_name,

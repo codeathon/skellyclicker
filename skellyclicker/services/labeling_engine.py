@@ -1,6 +1,7 @@
 """Headless labeling session — wraps VideoHandler without OpenCV windows."""
 
 import threading
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -13,8 +14,13 @@ from skellyclicker import (
 )
 from skellyclicker.core.video_handler.image_annotator import get_colors_for_css
 from skellyclicker.core.video_handler.video_handler import VideoHandler
+from skellyclicker.services.human_labels_merge import merge_human_label_rows
 from skellyclicker.services.label_nav_frames import build_nav_frame_list
-from skellyclicker.services.sample_frames_sidecar import read_sample_frames
+from skellyclicker.services.models import LabelingMode
+from skellyclicker.services.sample_frames_sidecar import (
+	read_sample_frames_by_video,
+	sample_frames_for_video,
+)
 
 
 class LabelingEngine(BaseModel):
@@ -22,19 +28,27 @@ class LabelingEngine(BaseModel):
 	model_config = ConfigDict(arbitrary_types_allowed=True)
 
 	session_id: str = Field(default_factory=lambda: str(uuid4()))
-	video_handler: VideoHandler
+	# Any so unit tests can inject MagicMock; runtime always uses VideoHandler.
+	video_handler: Any
 	frame_number: int = 0
 	auto_next_point: bool = True
 	show_machine_labels: bool = False
 	show_help: bool = False
 	show_names: bool = True
+	# Synced grid vs single-video corpus — drives save merge and state_dict fields.
+	labeling_mode: LabelingMode = LabelingMode.single
+	# Full session video list (absolute paths); used for corpus video selector.
+	session_video_paths: list[str] = Field(default_factory=list)
+	active_video_path: str | None = None
+	# Path of the corpus human CSV before this open — merge other videos on save.
+	_corpus_labels_path: str | None = PrivateAttr(default=None)
 	# OpenCV VideoCapture is not thread-safe; scrub previews hit this concurrently.
 	_render_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 	_undo_stack: list[dict[str, Any]] = PrivateAttr(default_factory=list)
 	# Snapshot at frame navigation — machine overlay must not flip us into review mode mid-click.
 	_frame_had_human_on_entry: bool = PrivateAttr(default=False)
-	# Performance-sample frames from the last partial analyze (sidecar), loaded once at open.
-	_sample_frames: list[int] | None = PrivateAttr(default=None)
+	# Performance-sample frames per video from the last partial analyze (sidecar).
+	_sample_frames_by_video: dict[str, list[int]] | None = PrivateAttr(default=None)
 
 	@classmethod
 	def open(
@@ -44,6 +58,10 @@ class LabelingEngine(BaseModel):
 		machine_labels_path: str | None,
 		train_on_machine_labels: bool,
 		tracked_point_names: list[str],
+		*,
+		labeling_mode: LabelingMode = LabelingMode.single,
+		session_video_paths: list[str] | None = None,
+		active_video_path: str | None = None,
 	) -> "LabelingEngine":
 		# Web labeler: human CSV is always editable; machine CSV is read-only overlay.
 		# train_on_machine_labels is ignored when opening from the web API.
@@ -66,9 +84,19 @@ class LabelingEngine(BaseModel):
 			tracked_point_names=list(tracked_point_names) if tracked_point_names else None,
 			machine_labels_path=overlay,
 		)
+		session_paths = list(session_video_paths or video_paths)
+		active = active_video_path
+		if labeling_mode != LabelingMode.synced and not active:
+			active = video_paths[0] if video_paths else None
 		engine = cls(
 			video_handler=handler,
+			labeling_mode=labeling_mode,
+			session_video_paths=session_paths,
+			active_video_path=active,
 		)
+		# Remember corpus CSV so single-video saves merge other experiments' rows.
+		if labeling_mode != LabelingMode.synced and human_labels_path:
+			engine._corpus_labels_path = human_labels_path
 		annotator_cfg = engine.video_handler.image_annotator.config
 		annotator_cfg.web_help = True
 		annotator_cfg.external_hud = True
@@ -76,7 +104,7 @@ class LabelingEngine(BaseModel):
 		engine.sync_active_point()
 		engine._frame_had_human_on_entry = engine._frame_has_human_labels()
 		if overlay:
-			engine._sample_frames = read_sample_frames(overlay)
+			engine._sample_frames_by_video = read_sample_frames_by_video(overlay)
 		engine._sync_auto_next_point_for_frame()
 		engine._sync_annotator_overlay_flags()
 		return engine
@@ -124,7 +152,43 @@ class LabelingEngine(BaseModel):
 
 	def save_labels(self, save_path: str | None = None) -> str:
 		"""Write human labels to CSV without closing the labeler session."""
-		return self.video_handler.save_labels(save_path)
+		# Synced / single-file: write only open videos. Corpus: merge other videos.
+		if self.labeling_mode == LabelingMode.synced or not self.active_video_path:
+			return self.video_handler.save_labels(save_path)
+
+		handler = self.video_handler
+		if save_path is None:
+			save_dir = Path(handler.video_folder) / "skellyclicker_data"
+			save_dir.mkdir(exist_ok=True, parents=True)
+			from skellyclicker.core.human_labels_io import human_labels_csv_filename
+
+			out = save_dir / human_labels_csv_filename(
+				sorted(v.name for v in handler.videos.values())
+			)
+		else:
+			out = Path(save_path)
+			if out.is_dir():
+				from skellyclicker.core.human_labels_io import human_labels_csv_filename
+
+				out = out / human_labels_csv_filename(
+					sorted(v.name for v in handler.videos.values())
+				)
+
+		mask = handler.data_handler.dataframe.notna().any(axis=1)
+		new_rows = handler.data_handler.dataframe.loc[mask].reset_index()
+		# Prefer existing corpus path so we don't drop other videos when first save
+		# picks a new default filename next to the active video.
+		existing = self._corpus_labels_path
+		if existing is None and out.is_file():
+			existing = str(out)
+		path = merge_human_label_rows(
+			existing,
+			new_rows,
+			active_video=Path(self.active_video_path).name,
+			output_path=out,
+		)
+		self._corpus_labels_path = path
+		return path
 
 	def set_active_point(self, point_name: str) -> None:
 		self.video_handler.data_handler.set_active_point_by_name(point_name)
@@ -266,7 +330,16 @@ class LabelingEngine(BaseModel):
 		available = [name for name in tracked if name not in click_data]
 		return placed, available
 
-	def _machine_nonempty_frames(self) -> list[int] | None:
+	def _nav_video_name(self) -> str | None:
+		"""Basename used to scope left-panel nav; None = synced grid (all open videos)."""
+		if self.labeling_mode == LabelingMode.synced:
+			return None
+		if self.active_video_path:
+			return Path(self.active_video_path).name
+		names = self.video_handler.data_handler.config.video_names
+		return names[0] if names else None
+
+	def _machine_nonempty_frames(self, video_name: str | None = None) -> list[int] | None:
 		"""Frame indices with machine predictions, or None when overlay is unavailable."""
 		handler = self.video_handler
 		if not handler.machine_labels_path:
@@ -275,23 +348,30 @@ class LabelingEngine(BaseModel):
 		mlh = handler.machine_labels_handler
 		if mlh is None:
 			return None
-		return mlh.get_nonempty_frames()
+		return mlh.get_nonempty_frames(video_name)
 
 	def state_dict(self) -> dict:
 		handler = self.video_handler
 		active = handler.data_handler.active_point
-		labeled_frame_list = handler.data_handler.get_nonempty_frames()
+		# Corpus / single: left panel shows only the video selected in the right HUD.
+		nav_video = self._nav_video_name()
+		labeled_frame_list = handler.data_handler.get_nonempty_frames(nav_video)
 		labeled = len(labeled_frame_list)
-		# Prefer the explicit sample sidecar; only scan the (possibly dense) machine
-		# CSV for nav when no sidecar exists.
-		if self._sample_frames is not None:
+		sample_for_nav = sample_frames_for_video(
+			self._sample_frames_by_video, nav_video
+		)
+		# Predicted frames must be tied to the active video — never a cross-video union.
+		# Non-empty per-video samples win; otherwise use this video's machine CSV rows.
+		if sample_for_nav:
 			machine_frame_list = None
+			sample_frames = sample_for_nav
 		else:
-			machine_frame_list = self._machine_nonempty_frames()
+			machine_frame_list = self._machine_nonempty_frames(nav_video)
+			sample_frames = None
 		nav_frame_list = build_nav_frame_list(
 			labeled_frame_list,
 			machine_frame_list,
-			sample_frames=self._sample_frames,
+			sample_frames=sample_frames,
 		)
 		placed_points, available_points = self._frame_label_status()
 		tracked = handler.data_handler.config.tracked_point_names
@@ -318,7 +398,20 @@ class LabelingEngine(BaseModel):
 			"auto_next_point": self.auto_next_point,
 			"grid_width": handler.grid_parameters.total_width,
 			"grid_height": handler.grid_parameters.total_height,
+			"labeling_mode": self.labeling_mode.value,
+			"session_videos": [
+				{"path": p, "name": Path(p).name} for p in self.session_video_paths
+			],
+			"active_video_path": self.active_video_path,
+			"active_video_name": (
+				Path(self.active_video_path).name if self.active_video_path else None
+			),
 		}
 
 	def close(self, save: bool, save_path: str | None = None) -> str | None:
+		# Corpus mode must merge via save_labels before releasing captures.
+		if save and self.labeling_mode != LabelingMode.synced and self.active_video_path:
+			path = self.save_labels(save_path)
+			self.video_handler.close(save_data=False)
+			return path
 		return self.video_handler.close(save_data=save, save_path=save_path)

@@ -21,6 +21,14 @@ class WorkflowState(str, Enum):
 	review = "review"
 
 
+class LabelingMode(str, Enum):
+	"""Transparent labeler layout — picked from uploaded videos, not a user mode picker."""
+
+	single = "single"
+	synced = "synced"
+	corpus = "corpus"
+
+
 class AssetPathCheck(BaseModel):
 	"""Filesystem check for a path referenced by the session (computed, not persisted)."""
 	kind: str
@@ -35,6 +43,10 @@ class AppSession(BaseModel):
 	workflow_state: WorkflowState = WorkflowState.idle
 	session_saved_path: str | None = None
 	videos: List[str] | None = None
+	# Auto-detected from video frame counts; drives grid vs single-video labeler.
+	labeling_mode: LabelingMode = LabelingMode.single
+	# Absolute path of the video shown in corpus/single labeler (None = synced grid).
+	active_video_path: str | None = None
 	human_labels_path: str | None = None
 	machine_labels_path: str | None = None
 	dlc_project_path: str | None = None

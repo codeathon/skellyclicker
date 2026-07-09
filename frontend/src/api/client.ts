@@ -16,12 +16,16 @@ export interface AssetPathCheck {
   exists: boolean;
 }
 
+export type LabelingMode = "single" | "synced" | "corpus";
+
 export interface AppSession {
   session_id: string;
   generation: number;
   workflow_state: WorkflowState;
   session_saved_path: string | null;
   videos: string[] | null;
+  labeling_mode: LabelingMode;
+  active_video_path: string | null;
   human_labels_path: string | null;
   machine_labels_path: string | null;
   dlc_project_path: string | null;
@@ -40,6 +44,11 @@ export interface AppSession {
   filter_predictions: boolean;
   annotate_videos: boolean;
   asset_path_checks: AssetPathCheck[];
+}
+
+export interface SessionVideoOption {
+  path: string;
+  name: string;
 }
 
 export type NavFrameKind = "human" | "machine" | "both";
@@ -68,6 +77,10 @@ export interface LabelingState {
   auto_next_point: boolean;
   grid_width: number;
   grid_height: number;
+  labeling_mode?: LabelingMode;
+  session_videos?: SessionVideoOption[];
+  active_video_path?: string | null;
+  active_video_name?: string | null;
 }
 
 export type JobStatus = "pending" | "running" | "completed" | "failed";
@@ -210,6 +223,11 @@ export const client = {
     api<LabelingState>("/api/labeling/active-point", {
       method: "POST",
       body: JSON.stringify({ point_name }),
+    }),
+  setActiveLabelingVideo: (path: string) =>
+    api<AppSession>("/api/labeling/active-video", {
+      method: "POST",
+      body: JSON.stringify({ path }),
     }),
   undoLabel: () =>
     api<LabelingState>("/api/labeling/undo", { method: "POST" }),

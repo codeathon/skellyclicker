@@ -381,9 +381,14 @@ class DataHandler(BaseModel):
                 )
         return click_data
 
-    def get_nonempty_frames(self) -> list[int]:
+    def get_nonempty_frames(self, video_name: str | None = None) -> list[int]:
+        """Frame indices with any coordinates; optionally scoped to one video basename."""
         mask = self.dataframe.notna().any(axis=1)
         nonempty_dataframe = self.dataframe[mask]
+        if video_name is not None:
+            # Corpus left-panel nav must not mix frames from other session videos.
+            videos = nonempty_dataframe.index.get_level_values("video")
+            nonempty_dataframe = nonempty_dataframe[videos == video_name]
         nonempty_frames = nonempty_dataframe.index.get_level_values("frame").unique()
         return sorted(nonempty_frames.tolist())
 

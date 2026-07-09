@@ -107,6 +107,7 @@ export function LabelingCanvas({
 	const [saveNotice, setSaveNotice] = useState<string | null>(null);
 	const [isClosing, setIsClosing] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
+	const [switchingVideo, setSwitchingVideo] = useState(false);
 	const labelsPathRef = useRef(humanLabelsPath);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -569,6 +570,25 @@ export function LabelingCanvas({
 		[],
 	);
 
+	// Corpus mode: persist current video labels, reopen labeler on the selected video.
+	const onActiveVideo = useCallback(
+		async (path: string) => {
+			setSwitchingVideo(true);
+			setError(null);
+			stopPlaying(false);
+			try {
+				const session = await client.setActiveLabelingVideo(path);
+				onSessionUpdate(session);
+				await refresh();
+			} catch (err) {
+				if (!isIgnorableFetchError(err)) setError(String(err));
+			} finally {
+				setSwitchingVideo(false);
+			}
+		},
+		[onSessionUpdate, refresh, stopPlaying],
+	);
+
 	const onClick = async (e: React.MouseEvent<HTMLCanvasElement>) => {
 		const canvas = canvasRef.current;
 		if (!canvas || !state || closingRef.current) return;
@@ -634,6 +654,9 @@ export function LabelingCanvas({
 	const navFrames = resolveNavFrames(state);
 	const navCounts = navFrameCounts(navFrames);
 	const hasPredictedNav = navCounts.machine > 0 || navCounts.both > 0;
+	const showVideoSelector =
+		state.labeling_mode === "corpus" &&
+		(state.session_videos?.length ?? 0) > 1;
 
 	return (
 		<div
@@ -759,6 +782,31 @@ export function LabelingCanvas({
 					</div>
 				</div>
 				<aside className="labeling-hud" aria-label="Labeler info">
+					{showVideoSelector && (
+						<div className="labeling-hud-section">
+							<h3 className="labeling-hud-title">Video</h3>
+							<select
+								className="labeling-video-select"
+								aria-label="Active video"
+								disabled={isClosing || isSaving || switchingVideo}
+								value={state.active_video_path ?? ""}
+								onChange={(e) => {
+									const next = e.target.value;
+									if (!next || next === state.active_video_path) return;
+									void onActiveVideo(next);
+								}}
+							>
+								{state.session_videos!.map((v) => (
+									<option key={v.path} value={v.path}>
+										{v.name}
+									</option>
+								))}
+							</select>
+							{switchingVideo && (
+								<p className="hint labeling-hud-line">Switching video…</p>
+							)}
+						</div>
+					)}
 					<div className="labeling-hud-section">
 						<h3 className="labeling-hud-title">Label files</h3>
 						<p className="labeling-hud-line">
