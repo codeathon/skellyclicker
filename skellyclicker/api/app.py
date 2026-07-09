@@ -341,7 +341,17 @@ def create_dlc(body: CreateProjectBody) -> AppSession:
 
 @app.post("/api/labeling/open", response_model=AppSession)
 def open_labeler() -> AppSession:
-	return store.open_labeler()
+	# Catch everything here so the UI never sees a bare "Internal Server Error"
+	# (proxy/statusText) without a useful detail string.
+	try:
+		return store.open_labeler()
+	except SessionError:
+		raise
+	except Exception as exc:
+		logging.getLogger("skellyclicker.api").exception("labeling/open failed")
+		raise SessionError(
+			f"Could not open labeler: {type(exc).__name__}: {exc}"
+		) from exc
 
 
 @app.post("/api/labeling/close", response_model=AppSession)

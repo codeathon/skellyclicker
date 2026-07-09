@@ -101,15 +101,27 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    const detail = err.detail;
-    const message =
-      typeof detail === "string"
-        ? detail
-        : Array.isArray(detail)
-          ? detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join("; ")
-          : res.statusText;
-    throw new Error(message || res.statusText);
+    // Prefer JSON detail; fall back to raw body (Vite proxy / Starlette plain 500).
+    const raw = await res.text();
+    let message = res.statusText || `HTTP ${res.status}`;
+    try {
+      const err = JSON.parse(raw) as { detail?: unknown };
+      const detail = err.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        message = detail;
+      } else if (Array.isArray(detail)) {
+        message =
+          detail
+            .map((d: { msg?: string }) => d.msg)
+            .filter(Boolean)
+            .join("; ") || message;
+      } else if (raw.trim()) {
+        message = raw.trim().slice(0, 500);
+      }
+    } catch {
+      if (raw.trim()) message = raw.trim().slice(0, 500);
+    }
+    throw new Error(message);
   }
   return res.json();
 }

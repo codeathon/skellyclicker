@@ -310,27 +310,17 @@ class SessionStore:
 			raise SessionError("Select videos first")
 		# Re-detect in case session JSON was loaded with a stale mode.
 		self._refresh_labeling_mode(videos)
+		# Hard rule until synced multi-cam is an explicit opt-in: never open a
+		# multi-video grid. Training-corpus sessions always label one at a time.
+		if len(videos) > 1:
+			self.session.labeling_mode = LabelingMode.corpus
+			active = self.session.active_video_path or videos[0]
+			if active not in videos:
+				active = videos[0]
+			self.session.active_video_path = active
+			return [active]
 		if self.session.labeling_mode == LabelingMode.synced:
-			# CAP_PROP frame counts can lie (same reported N for unequal files).
-			# Soft-verify before opening a multi-cam grid so we don't 500.
-			try:
-				from skellyclicker.services.labeling_mode import probe_video_frame_count
-
-				counts = {probe_video_frame_count(p) for p in videos}
-				# 0 or disagreeing counts → corpus (0 is a common CAP_PROP lie).
-				if 0 in counts or len(counts) > 1:
-					self.session.labeling_mode = LabelingMode.corpus
-					if not self.session.active_video_path:
-						self.session.active_video_path = videos[0]
-				else:
-					return videos
-			except ValueError:
-				# Unreadable probe → prefer one-at-a-time over a hard fail.
-				self.session.labeling_mode = (
-					LabelingMode.corpus if len(videos) > 1 else LabelingMode.single
-				)
-				if not self.session.active_video_path:
-					self.session.active_video_path = videos[0]
+			return videos
 		active = self.session.active_video_path or videos[0]
 		if active not in videos:
 			raise SessionError(f"Active video not in session: {active}")

@@ -23,31 +23,18 @@ def probe_video_frame_count(path: str) -> int:
 		cap.release()
 
 
-def _parent_dirs(video_paths: list[str]) -> set[str]:
-	"""Resolved parent folders — different parents imply separate experiments."""
-	parents: set[str] = set()
-	for raw in video_paths:
-		parents.add(str(Path(raw).expanduser().resolve().parent))
-	return parents
-
-
 def detect_labeling_mode(video_paths: list[str]) -> LabelingMode:
 	"""Pick labeler layout from the session video set.
 
 	Rules:
 	- 0/1 videos → single
-	- 2+ videos in different parent folders → corpus (training set, not multi-cam)
-	- 2+ same folder, equal frame counts → synced grid
-	- 2+ same folder, unequal frame counts → corpus
+	- 2+ videos → corpus (one video at a time)
+
+	Synced multi-cam grid is disabled for now: auto-detecting equal CAP_PROP
+	counts was opening both videos and 500'ing for training-corpus sessions
+	(different experiments / unequal lengths). Re-enable synced only behind an
+	explicit multi-cam opt-in later.
 	"""
 	if len(video_paths) <= 1:
 		return LabelingMode.single
-	# Different experiment folders must never open as a multi-cam grid — even when
-	# CAP_PROP reports matching lengths (common false positive → Internal Server Error).
-	if len(_parent_dirs(video_paths)) > 1:
-		return LabelingMode.corpus
-	counts = {probe_video_frame_count(p) for p in video_paths}
-	# CAP_PROP of 0 is unreliable (common before decode) — never treat as synced.
-	if 0 in counts or len(counts) > 1:
-		return LabelingMode.corpus
-	return LabelingMode.synced
+	return LabelingMode.corpus

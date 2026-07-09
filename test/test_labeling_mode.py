@@ -16,8 +16,9 @@ def test_detect_single_video():
 
 
 def test_detect_synced_equal_frame_counts():
+	# Synced auto-detect is disabled — 2+ videos always open as corpus.
 	with patch("skellyclicker.services.labeling_mode.probe_video_frame_count", return_value=100):
-		assert detect_labeling_mode(["/a/cam0.mp4", "/a/cam1.mp4"]) == LabelingMode.synced
+		assert detect_labeling_mode(["/a/cam0.mp4", "/a/cam1.mp4"]) == LabelingMode.corpus
 
 
 def test_detect_corpus_when_frame_count_is_zero():
@@ -67,8 +68,8 @@ def test_session_store_sets_mode_on_add_videos(tmp_path: Path):
 	assert store.session.active_video_path == str(a.resolve())
 
 
-def test_labeler_paths_downgrade_synced_when_counts_disagree(tmp_path: Path):
-	"""Stale synced mode must not open unequal videos as a grid (500)."""
+def test_labeler_paths_force_corpus_for_multiple_videos(tmp_path: Path):
+	"""2+ videos must never open as a synced grid (one path only)."""
 	from skellyclicker.services.session_store import SessionStore
 
 	a = tmp_path / "short.mp4"
@@ -80,17 +81,9 @@ def test_labeler_paths_downgrade_synced_when_counts_disagree(tmp_path: Path):
 	store.session.labeling_mode = LabelingMode.synced
 	store.session.active_video_path = None
 
-	counts = {str(a): 10, str(b): 99}
-
-	def _probe(path: str) -> int:
-		return counts[path]
-
 	with patch(
 		"skellyclicker.services.session_store.detect_labeling_mode",
 		return_value=LabelingMode.synced,
-	), patch(
-		"skellyclicker.services.labeling_mode.probe_video_frame_count",
-		side_effect=_probe,
 	):
 		paths = store._labeler_video_paths()
 
@@ -125,13 +118,10 @@ def test_open_labeler_falls_back_when_synced_open_rejects_unequal(tmp_path: Path
 			raise ValueError("All videos must have the same number of images")
 		return fake_engine
 
-	# Soft-verify sees equal counts so synced paths are returned; open then fails.
-	with patch.object(store, "_refresh_labeling_mode"), patch.object(
-		store, "_ensure_live_inference"
-	), patch(
-		"skellyclicker.services.labeling_mode.probe_video_frame_count",
-		return_value=100,
-	), patch(
+	# Bypass path selection so we still exercise the open-time corpus fallback.
+	with patch.object(
+		store, "_labeler_video_paths", return_value=[str(a.resolve()), str(b.resolve())]
+	), patch.object(store, "_ensure_live_inference"), patch(
 		"skellyclicker.services.labeling_engine.LabelingEngine.open",
 		side_effect=_open,
 	):
