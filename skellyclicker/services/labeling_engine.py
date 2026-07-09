@@ -17,7 +17,10 @@ from skellyclicker.core.video_handler.video_handler import VideoHandler
 from skellyclicker.services.human_labels_merge import merge_human_label_rows
 from skellyclicker.services.label_nav_frames import build_nav_frame_list
 from skellyclicker.services.models import LabelingMode
-from skellyclicker.services.sample_frames_sidecar import read_sample_frames
+from skellyclicker.services.sample_frames_sidecar import (
+	read_sample_frames_by_video,
+	sample_frames_for_video,
+)
 
 
 class LabelingEngine(BaseModel):
@@ -44,8 +47,8 @@ class LabelingEngine(BaseModel):
 	_undo_stack: list[dict[str, Any]] = PrivateAttr(default_factory=list)
 	# Snapshot at frame navigation — machine overlay must not flip us into review mode mid-click.
 	_frame_had_human_on_entry: bool = PrivateAttr(default=False)
-	# Performance-sample frames from the last partial analyze (sidecar), loaded once at open.
-	_sample_frames: list[int] | None = PrivateAttr(default=None)
+	# Performance-sample frames per video from the last partial analyze (sidecar).
+	_sample_frames_by_video: dict[str, list[int]] | None = PrivateAttr(default=None)
 
 	@classmethod
 	def open(
@@ -101,7 +104,7 @@ class LabelingEngine(BaseModel):
 		engine.sync_active_point()
 		engine._frame_had_human_on_entry = engine._frame_has_human_labels()
 		if overlay:
-			engine._sample_frames = read_sample_frames(overlay)
+			engine._sample_frames_by_video = read_sample_frames_by_video(overlay)
 		engine._sync_auto_next_point_for_frame()
 		engine._sync_annotator_overlay_flags()
 		return engine
@@ -327,7 +330,16 @@ class LabelingEngine(BaseModel):
 		available = [name for name in tracked if name not in click_data]
 		return placed, available
 
-	def _machine_nonempty_frames(self) -> list[int] | None:
+	def _nav_video_name(self) -> str | None:
+		"""Basename used to scope left-panel nav; None = synced grid (all open videos)."""
+		if self.labeling_mode == LabelingMode.synced:
+			return None
+		if self.active_video_path:
+			return Path(self.active_video_path).name
+		names = self.video_handler.data_handler.config.video_names
+		return names[0] if names else None
+
+	def _machine_nonempty_frames(self, video_name: str | None = None) -> list[int] | None:
 		"""Frame indices with machine predictions, or None when overlay is unavailable."""
 		handler = self.video_handler
 		if not handler.machine_labels_path:
@@ -336,23 +348,28 @@ class LabelingEngine(BaseModel):
 		mlh = handler.machine_labels_handler
 		if mlh is None:
 			return None
-		return mlh.get_nonempty_frames()
+		return mlh.get_nonempty_frames(video_name)
 
 	def state_dict(self) -> dict:
 		handler = self.video_handler
 		active = handler.data_handler.active_point
-		labeled_frame_list = handler.data_handler.get_nonempty_frames()
+		# Corpus / single: left panel shows only the video selected in the right HUD.
+		nav_video = self._nav_video_name()
+		labeled_frame_list = handler.data_handler.get_nonempty_frames(nav_video)
 		labeled = len(labeled_frame_list)
+		sample_for_nav = sample_frames_for_video(
+			self._sample_frames_by_video, nav_video
+		)
 		# Prefer the explicit sample sidecar; only scan the (possibly dense) machine
 		# CSV for nav when no sidecar exists.
-		if self._sample_frames is not None:
+		if sample_for_nav is not None:
 			machine_frame_list = None
 		else:
-			machine_frame_list = self._machine_nonempty_frames()
+			machine_frame_list = self._machine_nonempty_frames(nav_video)
 		nav_frame_list = build_nav_frame_list(
 			labeled_frame_list,
 			machine_frame_list,
-			sample_frames=self._sample_frames,
+			sample_frames=sample_for_nav,
 		)
 		placed_points, available_points = self._frame_label_status()
 		tracked = handler.data_handler.config.tracked_point_names

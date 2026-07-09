@@ -130,9 +130,9 @@ def partial_analyze_human_labels(
 
 	bodyparts = model_cfg["metadata"]["bodyparts"]
 	patch_parts: list[pd.DataFrame] = []
-	# Sampled (unseen) frames across all videos — recorded so the labeler can show
-	# them even when the machine CSV is dense (seeded from a prior full analysis).
-	all_sample_frames: set[int] = set()
+	# Sampled (unseen) frames per video — recorded so the labeler can show
+	# them for the active video even when the machine CSV is dense.
+	sample_frames_by_video: dict[str, list[int]] = {}
 	video_items = [
 		(name, frames)
 		for name, frames in frames_per_video.items()
@@ -151,7 +151,7 @@ def partial_analyze_human_labels(
 			min_frames=PERF_SAMPLE_MIN_FRAMES,
 			max_frames=PERF_SAMPLE_MAX_FRAMES,
 		)
-		all_sample_frames.update(sample)
+		sample_frames_by_video[str(video_name)] = list(sample)
 		combined = sorted(set(labeled) | set(sample))
 		n_frames = len(combined)
 		report(
@@ -198,7 +198,7 @@ def partial_analyze_human_labels(
 	machine_path.parent.mkdir(parents=True, exist_ok=True)
 	source = machine_path if machine_path.is_file() else machine_path
 	patch_machine_labels_csv(source, combined_patch, output_path=machine_path)
-	# Record sampled frames so the labeler can highlight them regardless of CSV density.
-	write_sample_frames(machine_path, all_sample_frames)
+	# Per-video sample list so corpus left-panel nav filters to the active video.
+	write_sample_frames(machine_path, sample_frames_by_video)
 	report(1.0, f"Partial analysis complete: {machine_path}")
 	return str(machine_path)
