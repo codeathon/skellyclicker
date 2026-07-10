@@ -10,7 +10,9 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import cv2
 import pandas as pd
@@ -80,6 +82,184 @@ def collected_data_csv_path(
 	return folder / f"CollectedData_{scorer_name}.csv"
 
 
+def _write_collected_data_pair(df: pd.DataFrame, folder: Path, scorer_name: str) -> Path:
+	"""Write CollectedData CSV + H5 the way DeepLabCut expects.
+
+	DLC's create_training_dataset reads the H5 via ``pd.read_hdf``. Writing with
+	``format="table"`` or object dtypes produces files that raise:
+	"Dataset(s) incompatible with Pandas data types, not table, or no datasets found".
+	"""
+	folder = Path(folder)
+	folder.mkdir(parents=True, exist_ok=True)
+	csv_path = collected_data_csv_path(folder, scorer_name)
+	h5_path = folder / f"CollectedData_{scorer_name}.h5"
+
+	# Coerce coordinates to float so HDF5 gets numeric columns, not object.
+	if len(df.columns) and len(df.index):
+		df = df.apply(pd.to_numeric, errors="coerce")
+
+	df.to_csv(csv_path)
+
+	# Remove a stale/broken H5 before rewriting so DLC never opens a bad file.
+	if h5_path.exists():
+		h5_path.unlink()
+
+	if df.empty:
+		# Empty labels: CSV headers only; skip H5 (empty MultiIndex stores break DLC).
+		return csv_path
+
+	# Round-trip through CSV so MultiIndex matches DLC's on-disk layout, then
+	# write fixed-format H5 (DLC default — not format="table").
+	reloaded = pd.read_csv(csv_path, header=[0, 1, 2], index_col=0)
+	reloaded.columns = reloaded.columns.set_names(["scorer", "bodyparts", "coords"])
+	try:
+		reloaded.to_hdf(
+			str(h5_path),
+			key="df_with_missing",
+			mode="w",
+			format="fixed",
+		)
+	except ImportError:
+		logger.warning(
+			"PyTables (tables) not installed; wrote CSV only (%s). "
+			"Install pytables so DeepLabCut can read CollectedData_*.h5.",
+			csv_path,
+		)
+		return csv_path
+
+	# Fail fast if the file cannot be read back the way DLC will.
+	try:
+		pd.read_hdf(str(h5_path), key="df_with_missing")
+	except Exception as exc:
+		h5_path.unlink(missing_ok=True)
+		raise RuntimeError(
+			f"Wrote {h5_path} but pandas cannot read it back (DLC will fail): {exc}"
+		) from exc
+
+	return csv_path
+
+
+def session_labeled_folders(
+	labeled_data: str | Path,
+	video_paths: list[str],
+) -> list[Path]:
+	"""Per-video labeled-data folders for UI-selected videos only."""
+	root = resolve_human_labels_root(labeled_data)
+	return [video_labeled_folder(root, v) for v in video_paths]
+
+
+def has_human_labels_for_videos(
+	labeled_data: str | Path,
+	video_paths: list[str],
+) -> bool:
+	"""True when at least one session video has a CollectedData_*.csv."""
+	for folder in session_labeled_folders(labeled_data, video_paths):
+		if folder.is_dir() and any(folder.glob(_COLLECTED_GLOB)):
+			return True
+	return False
+
+
+def regenerate_all_collected_data_h5(
+	labeled_data: str | Path,
+	video_paths: list[str] | None = None,
+) -> list[str]:
+	"""Rewrite CollectedData_*.h5 from sibling CSVs (DLC-compatible).
+
+	When ``video_paths`` is set, only those videos' folders are refreshed —
+	other labeled-data folders on disk are left alone.
+	"""
+	root = resolve_human_labels_root(labeled_data)
+	if not root.is_dir():
+		return []
+
+	if video_paths is not None:
+		folders = [
+			f for f in session_labeled_folders(root, video_paths) if f.is_dir()
+		]
+	else:
+		folders = [p for p in sorted(root.iterdir()) if p.is_dir()]
+
+	rewritten: list[str] = []
+	for folder in folders:
+		for orphan in folder.glob("CollectedData_*.h5"):
+			if not orphan.with_suffix(".csv").is_file():
+				logger.warning("Removing orphan CollectedData H5 without CSV: %s", orphan)
+				orphan.unlink(missing_ok=True)
+
+		for csv_path in sorted(folder.glob(_COLLECTED_GLOB)):
+			stem = csv_path.stem
+			prefix = "CollectedData_"
+			scorer = (
+				stem[len(prefix) :] if stem.startswith(prefix) else HUMAN_EXPERIMENTER_NAME
+			)
+			try:
+				df = pd.read_csv(csv_path, header=[0, 1, 2], index_col=0)
+				if isinstance(df.columns, pd.MultiIndex):
+					df.columns = df.columns.set_names(
+						["scorer", "bodyparts", "coords"]
+					)
+				_write_collected_data_pair(df, folder, scorer)
+				rewritten.append(str(csv_path))
+				logger.info("Regenerated H5 for %s", csv_path)
+			except Exception:
+				logger.exception("Failed to regenerate H5 from %s", csv_path)
+				raise
+	return rewritten
+
+
+@contextmanager
+def labeled_data_session_subset(
+	labeled_data: str | Path,
+	video_paths: list[str],
+) -> Iterator[Path]:
+	"""Temporarily hide non-session labeled-data folders from DeepLabCut.
+
+	DLC's create_training_dataset scans every subfolder under labeled-data.
+	Move unrelated folders aside for the duration of the train dataset build,
+	then restore them so other experiments' labels stay on disk.
+	"""
+	root = resolve_human_labels_root(labeled_data)
+	root.mkdir(parents=True, exist_ok=True)
+	keep = {video_labeled_folder(root, v).name for v in video_paths}
+	hold_dir = root.parent / ".labeled-data-held-aside"
+	hold_dir.mkdir(parents=True, exist_ok=True)
+	moved: list[tuple[Path, Path]] = []
+	try:
+		for child in list(root.iterdir()):
+			if not child.is_dir():
+				continue
+			if child.name in keep:
+				continue
+			dest = hold_dir / child.name
+			# Avoid clobbering a previous interrupted hold-aside.
+			if dest.exists():
+				suffix = 1
+				while (hold_dir / f"{child.name}__{suffix}").exists():
+					suffix += 1
+				dest = hold_dir / f"{child.name}__{suffix}"
+			child.rename(dest)
+			moved.append((dest, root / child.name))
+			logger.info(
+				"Holding aside labeled-data folder not in session: %s",
+				child.name,
+			)
+		yield root
+	finally:
+		for src, dst in moved:
+			try:
+				if src.exists():
+					if dst.exists():
+						logger.warning(
+							"Cannot restore %s; destination exists: %s",
+							src,
+							dst,
+						)
+					else:
+						src.rename(dst)
+			except OSError:
+				logger.exception("Failed to restore labeled-data folder %s → %s", src, dst)
+
+
 def has_human_labels(labeled_data: str | Path) -> bool:
 	"""True when any CollectedData_*.csv exists under labeled-data."""
 	root = Path(labeled_data).expanduser().resolve()
@@ -135,10 +315,24 @@ def bodyparts_from_collected_df(df: pd.DataFrame) -> list[str]:
 	return names
 
 
-def bodyparts_from_labeled_data(labeled_data: str | Path) -> list[str]:
-	"""Bodyparts from the first CollectedData CSV under labeled-data."""
+def bodyparts_from_labeled_data(
+	labeled_data: str | Path,
+	video_paths: list[str] | None = None,
+) -> list[str]:
+	"""Bodyparts from CollectedData under labeled-data.
+
+	When ``video_paths`` is set, only those videos' folders are considered so
+	other experiments in the same DLC project cannot change the bodypart set.
+	"""
 	root = resolve_human_labels_root(labeled_data)
-	for csv_path in sorted(root.glob(f"*/{_COLLECTED_GLOB}")):
+	csv_paths: list[Path]
+	if video_paths is not None:
+		csv_paths = []
+		for folder in session_labeled_folders(root, video_paths):
+			csv_paths.extend(sorted(folder.glob(_COLLECTED_GLOB)))
+	else:
+		csv_paths = sorted(root.glob(f"*/{_COLLECTED_GLOB}"))
+	for csv_path in csv_paths:
 		df = read_collected_data_csv(csv_path)
 		names = bodyparts_from_collected_df(df)
 		if names:
@@ -231,14 +425,7 @@ def write_video_labeled_data(
 
 	if video_rows.empty:
 		# Empty labels: still write empty CollectedData so the folder is valid.
-		csv_path = collected_data_csv_path(folder, scorer_name)
-		df.to_csv(csv_path)
-		h5_path = folder / f"CollectedData_{scorer_name}.h5"
-		try:
-			df.to_hdf(str(h5_path), key="df_with_missing", format="table", mode="w")
-		except ImportError:
-			logger.warning("pytables not installed; skipped writing %s", h5_path)
-		return csv_path
+		return _write_collected_data_pair(df, folder, scorer_name)
 
 	if not video_path.is_file():
 		raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -274,14 +461,7 @@ def write_video_labeled_data(
 	finally:
 		cap.release()
 
-	csv_path = collected_data_csv_path(folder, scorer_name)
-	df.to_csv(csv_path)
-	# H5 is preferred by DLC but optional when pytables is unavailable.
-	h5_path = folder / f"CollectedData_{scorer_name}.h5"
-	try:
-		df.to_hdf(str(h5_path), key="df_with_missing", format="table", mode="w")
-	except ImportError:
-		logger.warning("pytables not installed; skipped writing %s", h5_path)
+	csv_path = _write_collected_data_pair(df, folder, scorer_name)
 	logger.info("Saved DLC human labels to %s", csv_path)
 	return csv_path
 
@@ -341,6 +521,8 @@ def write_labeled_data_from_wide(
 			joint_names=joint_names,
 			scorer_name=scorer_name,
 		)
+	# Refresh H5 only for session videos — not every folder in the DLC project.
+	regenerate_all_collected_data_h5(root, video_paths=video_paths)
 	return root
 
 
