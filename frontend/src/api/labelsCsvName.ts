@@ -1,4 +1,25 @@
-/** Match server default in skellyclicker.core.human_labels_io.human_labels_csv_filename */
+/** Basename of a labels path for compact UI display. */
+export function labelsFileBasename(path: string | null | undefined): string | null {
+	if (!path) return null;
+	const parts = path.split(/[/\\]/);
+	return parts[parts.length - 1] || path;
+}
+
+/** Display name for human labels — labeled-data folder or legacy CSV basename. */
+export function humanLabelsDisplayName(
+	humanLabelsPath: string | null | undefined,
+	_videoPaths?: string[] | null | undefined,
+): string {
+	if (humanLabelsPath) {
+		return labelsFileBasename(humanLabelsPath) ?? humanLabelsPath;
+	}
+	return "labeled-data (unsaved)";
+}
+
+/**
+ * @deprecated Human labels save to the DLC project labeled-data folder; no CSV dialog.
+ * Kept for any residual callers that still build a default path string.
+ */
 export function humanLabelsCsvDefaultName(
 	videoPaths: string[] | null | undefined,
 	now = new Date(),
@@ -40,27 +61,8 @@ function joinPath(parent: string, ...segments: string[]): string {
 	return path;
 }
 
-/** Basename of a labels CSV path for compact UI display. */
-export function labelsFileBasename(path: string | null | undefined): string | null {
-	if (!path) return null;
-	const parts = path.split(/[/\\]/);
-	return parts[parts.length - 1] || path;
-}
-
-/** Basename of the human labels CSV in use, or the default name if saving later. */
-export function humanLabelsDisplayName(
-	humanLabelsPath: string | null | undefined,
-	videoPaths: string[] | null | undefined,
-): string {
-	if (humanLabelsPath) {
-		return labelsFileBasename(humanLabelsPath) ?? humanLabelsPath;
-	}
-	return humanLabelsCsvDefaultName(videoPaths);
-}
-
 /**
- * Full default path for the save dialog (zenity/tk need a path, not basename alone).
- * Matches server default: {video_folder}/skellyclicker_data/{timestamp}_..._labels.csv
+ * @deprecated Saves go to DLC labeled-data; no save-as dialog.
  */
 export function humanLabelsSaveDefaultPath(
 	humanLabelsPath: string | null | undefined,

@@ -42,10 +42,9 @@ class DLCJobRunner:
 			raise ValueError("Load a DLC project first")
 		if not session.videos:
 			raise ValueError("Select videos first")
-		# Web Train Network always uses human labels — live scrub replaces
-		# partial-analyze / train-on-machine for interactive review.
-		csv_path = session.human_labels_path
-		if not csv_path:
+		# Web Train Network uses DLC labeled-data (human labels source of truth).
+		labels_path = session.human_labels_path
+		if not labels_path:
 			raise ValueError("Save human labels before training")
 
 		handler = store.dlc_handler
@@ -70,7 +69,7 @@ class DLCJobRunner:
 					self._set_progress(job, fraction, message)
 
 				handler.train_model(
-					labels_csv_path=csv_path,
+					labels_csv_path=labels_path,
 					video_paths=videos,
 					training_config=config,
 					progress_callback=on_train_progress,

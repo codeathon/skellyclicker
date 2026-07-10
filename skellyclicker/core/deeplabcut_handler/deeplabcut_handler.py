@@ -127,8 +127,8 @@ class DeeplabcutHandler(BaseModel):
 
     def train_model(
         self,
-        labels_csv_path: str,
-        video_paths: list[str],
+        labels_csv_path: str | None = None,
+        video_paths: list[str] | None = None,
         training_config: DeeplabcutTrainingConfig | None = None,
         progress_callback: Callable[[float | None, str], None] | None = None,
     ):
@@ -139,14 +139,24 @@ class DeeplabcutHandler(BaseModel):
         if training_config is None:
             training_config = DeeplabcutTrainingConfig()
 
+        if not video_paths:
+            raise ValueError("Select videos before training")
+
         # Path registry allows videos in different folders (cross-experiment corpus).
         from skellyclicker.services.video_path_registry import build_video_path_registry
+        from skellyclicker.core.deeplabcut_handler.labeled_data_io import (
+            has_human_labels,
+            is_legacy_skellyclicker_csv,
+            labeled_data_dir,
+            resolve_human_labels_root,
+        )
 
         registry = build_video_path_registry(video_paths)
         # Legacy single-folder arg still used as fallback prefix when registry unused.
         video_folder = Path(next(iter(registry.values()))).parent
 
         parent_directory = Path(self.project_config_path).parent
+        labeled_root = labeled_data_dir(parent_directory)
 
         if (
             parent_directory / "dlc-models-pytorch" / f"iteration-{self.iteration}"
@@ -156,13 +166,29 @@ class DeeplabcutHandler(BaseModel):
             )
             self._bump_iteration()
 
-        report(0.05, "Processing labeled frames…")
-        fill_in_labelled_data_folder(
-            path_to_videos_for_training=str(video_folder),
-            path_to_dlc_project_folder=str(parent_directory),
-            path_to_image_labels_csv=labels_csv_path,
-            video_paths=video_paths,
-        )
+        # Human labels live in labeled-data. Only convert when a legacy flat CSV
+        # is still passed (CLI / one-shot import); web train skips this.
+        if labels_csv_path and Path(labels_csv_path).is_file() and is_legacy_skellyclicker_csv(
+            labels_csv_path
+        ):
+            report(0.05, "Processing labeled frames…")
+            fill_in_labelled_data_folder(
+                path_to_videos_for_training=str(video_folder),
+                path_to_dlc_project_folder=str(parent_directory),
+                path_to_image_labels_csv=labels_csv_path,
+                video_paths=video_paths,
+            )
+        elif labels_csv_path:
+            try:
+                labeled_root = resolve_human_labels_root(labels_csv_path)
+            except ValueError:
+                labeled_root = labeled_data_dir(parent_directory)
+
+        if not has_human_labels(labeled_root):
+            raise ValueError(
+                f"No human labels in {labeled_root}. "
+                "Save labels from the labeler (or import) before training."
+            )
 
         report(0.15, f"Creating training dataset ({training_config.model_type})…")
         deeplabcut.create_training_dataset(self.project_config_path, net_type=training_config.model_type)

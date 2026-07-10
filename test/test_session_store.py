@@ -138,69 +138,76 @@ def test_analyze_options_round_trip(fresh_store):
 
 
 def test_close_labeler_save_registers_human_labels(fresh_store, tmp_path):
-	"""Saving from the labeler always registers human_labels_path."""
+	"""Saving from the labeler always registers human_labels_path (labeled-data)."""
 	from unittest.mock import MagicMock
 
-	csv_path = tmp_path / "labels.csv"
-	csv_path.write_text("video,frame,nose_x,nose_y\ncam1,0,1.0,2.0\n")
-	# Real file: finalize drops missing machine paths so Loaded Assets stays honest.
-	machine_csv = tmp_path / "machine.csv"
+	labeled = tmp_path / "proj" / "labeled-data"
+	labeled.mkdir(parents=True)
+	# Machine CSV under the project so finalize does not clear an out-of-project path.
+	machine_csv = tmp_path / "proj" / "machine.csv"
 	machine_csv.write_text("video,frame,nose_x,nose_y\n")
+	(tmp_path / "proj" / "config.yaml").write_text("Task: t\n")
 
 	mock_engine = MagicMock()
 	mock_engine.session_id = "label-session-1"
-	mock_engine.close.return_value = str(csv_path)
+	mock_engine.close.return_value = str(labeled)
 	mock_engine.video_handler.data_handler.get_nonempty_frames.return_value = [0]
 
 	fresh_store.labeling_engine = mock_engine
 	fresh_store.session.labeling_session_id = "label-session-1"
 	fresh_store.session.train_on_machine_labels = True
 	fresh_store.session.machine_labels_path = str(machine_csv)
+	fresh_store.session.dlc_project_path = str(tmp_path / "proj")
 
-	fresh_store.close_labeler(save=True, save_path=str(csv_path))
+	fresh_store.close_labeler(save=True)
 
-	assert fresh_store.session.human_labels_path == str(csv_path)
+	assert fresh_store.session.human_labels_path == str(labeled)
 	assert fresh_store.session.machine_labels_path == str(machine_csv)
 	assert fresh_store.labeling_engine is None
 	assert "Labels saved to" in fresh_store.session.status_message
+	mock_engine.close.assert_called_once()
+	assert mock_engine.close.call_args.kwargs["save"] is True
+	assert "labeled-data" in mock_engine.close.call_args.kwargs["save_path"]
 
 
 def test_save_labeler_keeps_labeler_open(fresh_store, tmp_path):
-	"""Save writes CSV without closing the labeler session."""
+	"""Save writes labeled-data without closing the labeler session."""
 	from unittest.mock import MagicMock, patch
 
-	csv_path = tmp_path / "labels.csv"
-	csv_path.write_text("video,frame,nose_x,nose_y\ncam1,0,1.0,2.0\n")
+	labeled = tmp_path / "proj" / "labeled-data"
+	labeled.mkdir(parents=True)
+	(tmp_path / "proj" / "config.yaml").write_text("Task: t\n")
 
 	mock_engine = MagicMock()
 	mock_engine.session_id = "label-session-1"
-	mock_engine.save_labels.return_value = str(csv_path)
+	mock_engine.save_labels.return_value = str(labeled)
 	mock_engine.video_handler.data_handler.config.tracked_point_names = ["nose"]
 
 	fresh_store.labeling_engine = mock_engine
 	fresh_store.session.labeling_session_id = "label-session-1"
+	fresh_store.session.dlc_project_path = str(tmp_path / "proj")
 
 	with patch.object(fresh_store, "_labeled_frame_count", return_value=3):
-		fresh_store.save_labeler(save_path=str(csv_path))
+		fresh_store.save_labeler()
 
-	mock_engine.save_labels.assert_called_once_with(str(csv_path))
+	mock_engine.save_labels.assert_called_once()
+	assert "labeled-data" in mock_engine.save_labels.call_args.args[0]
 	assert fresh_store.labeling_engine is mock_engine
-	assert fresh_store.session.human_labels_path == str(csv_path)
+	assert fresh_store.session.human_labels_path == str(labeled)
 	assert fresh_store.session.labeled_frame_count == 3
 	assert "Labels saved to" in fresh_store.session.status_message
 
 
-def test_save_labeler_rejects_machine_labels_path(fresh_store, tmp_path):
+def test_save_labeler_requires_dlc_project(fresh_store):
 	from unittest.mock import MagicMock
 
-	machine_csv = tmp_path / "machine.csv"
-	machine_csv.write_text("video,frame,nose_x,nose_y\n")
 	mock_engine = MagicMock()
 	fresh_store.labeling_engine = mock_engine
-	fresh_store.session.machine_labels_path = str(machine_csv)
+	fresh_store.session.dlc_project_path = None
+	fresh_store.session.human_labels_path = None
 
-	with pytest.raises(Exception, match="machine labels"):
-		fresh_store.save_labeler(save_path=str(machine_csv))
+	with pytest.raises(Exception, match="DLC project"):
+		fresh_store.save_labeler()
 
 
 def test_finalize_session_keeps_existing_project_machine_labels(fresh_store, tmp_path):

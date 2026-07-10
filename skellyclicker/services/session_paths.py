@@ -28,11 +28,13 @@ def collect_asset_path_checks(session: AppSession) -> list[AssetPathCheck]:
 		)
 
 	if session.human_labels_path:
+		human_path = Path(session.human_labels_path).expanduser()
 		checks.append(
 			AssetPathCheck(
 				kind="human_labels",
 				path=session.human_labels_path,
-				exists=Path(session.human_labels_path).expanduser().is_file(),
+				# labeled-data is a directory; legacy flat CSV is a file.
+				exists=human_path.is_dir() or human_path.is_file(),
 			)
 		)
 

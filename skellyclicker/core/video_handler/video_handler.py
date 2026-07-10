@@ -7,11 +7,16 @@ import numpy as np
 from pydantic import BaseModel
 
 from skellyclicker import VideoPathString
-from skellyclicker.core.human_labels_io import human_labels_csv_filename
 from skellyclicker.core.click_data_handler.click_handler import ClickHandler
 from skellyclicker.core.click_data_handler.data_handler import (
     DataHandler,
     DataHandlerConfig,
+)
+from skellyclicker.core.deeplabcut_handler.labeled_data_io import (
+    is_legacy_skellyclicker_csv,
+    resolve_human_labels_root,
+    wide_df_from_labeled_data,
+    write_labeled_data_from_wide,
 )
 from skellyclicker.core.video_handler.image_annotator import (
     ImageAnnotator,
@@ -26,6 +31,47 @@ from skellyclicker.core.video_handler.video_models import (
 
 logger = logging.getLogger(__name__)
 from copy import deepcopy
+
+
+def _is_human_labels_source(path: str) -> bool:
+	"""True for labeled-data dirs, CollectedData CSVs, or legacy flat human CSVs."""
+	p = Path(path)
+	if p.is_dir():
+		return True
+	if not p.is_file():
+		return False
+	if p.suffix.lower() != ".csv":
+		return False
+	return p.name.startswith("CollectedData_") or is_legacy_skellyclicker_csv(p)
+
+
+def _data_handler_from_human_labels(
+	path: str,
+	*,
+	video_paths: list[str],
+	video_names: list[str],
+	num_frames: int,
+	tracked_point_names: list[str] | None,
+) -> DataHandler:
+	"""Load human labels from DLC labeled-data or a legacy flat CSV."""
+	p = Path(path)
+	if p.is_file() and is_legacy_skellyclicker_csv(p):
+		return DataHandler.from_csv(
+			path,
+			video_names=video_names,
+			num_frames=num_frames,
+			tracked_point_names=tracked_point_names,
+		)
+	# DLC labeled-data directory or CollectedData_*.csv
+	root = resolve_human_labels_root(path)
+	wide = wide_df_from_labeled_data(root, video_paths)
+	return DataHandler.from_wide_dataframe(
+		wide,
+		video_names=video_names,
+		num_frames=num_frames,
+		tracked_point_names=tracked_point_names,
+		source_label=str(root),
+	)
 
 
 class VideoHandler(BaseModel):
@@ -134,10 +180,11 @@ class VideoHandler(BaseModel):
                     videos=videos, config_path=data_handler_path
                 )
             )
-        elif data_handler_path and Path(data_handler_path).suffix == ".csv":
+        elif data_handler_path and _is_human_labels_source(data_handler_path):
             resolved_video_names = sorted(v.name for v in videos.values())
-            data_handler = DataHandler.from_csv(
+            data_handler = _data_handler_from_human_labels(
                 data_handler_path,
+                video_paths=video_paths,
                 video_names=resolved_video_names,
                 num_frames=frame_count,
                 tracked_point_names=tracked_point_names,
@@ -590,20 +637,39 @@ class VideoHandler(BaseModel):
         return self._save_data(save_pathstring=save_path)
 
     def _save_data(self, save_pathstring: str | None = None) -> str:
+        """Write human labels to DLC labeled-data (source of truth).
+
+        ``save_pathstring`` must be the project's labeled-data directory (or the
+        project root containing labeled-data). Flat skellyclicker CSVs are not written.
+        """
         if save_pathstring is None:
-            # Default next to the loaded videos so labels are easy to find.
-            save_path = Path(self.video_folder) / "skellyclicker_data"
-            save_path.mkdir(exist_ok=True, parents=True)
+            raise ValueError(
+                "Create or load a DLC project before saving human labels"
+            )
+        save_path = Path(save_pathstring).expanduser().resolve()
+        if save_path.name == "labeled-data":
+            root = save_path
+        elif save_path.is_dir() and (save_path / "labeled-data").exists():
+            root = save_path / "labeled-data"
+        elif save_path.is_dir() and save_path.name != "labeled-data":
+            # Project dir before labeled-data exists, or explicit labeled-data path.
+            root = save_path / "labeled-data"
         else:
-            save_path = Path(save_pathstring)
+            try:
+                root = resolve_human_labels_root(save_path)
+            except ValueError as exc:
+                raise ValueError(
+                    "Human labels must be saved to the DLC project labeled-data folder"
+                ) from exc
+        root.mkdir(parents=True, exist_ok=True)
 
-        if save_path.is_dir():
-            save_path.mkdir(exist_ok=True, parents=True)
-            video_names = sorted(v.name for v in self.videos.values())
-            csv_path = save_path / human_labels_csv_filename(video_names)
-        else:
-            csv_path = save_path
-
-        self.data_handler.save_csv(output_path=str(csv_path))
-
-        return str(csv_path)
+        mask = self.data_handler.dataframe.notna().any(axis=1)
+        wide = self.data_handler.dataframe.loc[mask].reset_index()
+        video_paths = [str(p) for p in self.videos.keys()]
+        write_labeled_data_from_wide(
+            labeled_data_root=root,
+            wide_df=wide,
+            video_paths=video_paths,
+            joint_names=list(self.data_handler.config.tracked_point_names),
+        )
+        return str(root)

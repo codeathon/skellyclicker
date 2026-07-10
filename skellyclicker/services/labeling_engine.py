@@ -14,7 +14,10 @@ from skellyclicker import (
 )
 from skellyclicker.core.video_handler.image_annotator import get_colors_for_css
 from skellyclicker.core.video_handler.video_handler import VideoHandler
-from skellyclicker.services.human_labels_merge import merge_human_label_rows
+from skellyclicker.core.deeplabcut_handler.labeled_data_io import (
+	resolve_human_labels_root,
+	write_labeled_data_from_wide,
+)
 from skellyclicker.services.label_nav_frames import build_nav_frame_list
 from skellyclicker.services.models import LabelingMode
 from skellyclicker.services.live_inference import LiveInferenceService
@@ -149,44 +152,49 @@ class LabelingEngine(BaseModel):
 		)
 
 	def save_labels(self, save_path: str | None = None) -> str:
-		"""Write human labels to CSV without closing the labeler session."""
-		# Synced / single-file: write only open videos. Corpus: merge other videos.
+		"""Write human labels to DLC labeled-data without closing the labeler."""
+		# Synced / multi-open: write all open videos. Corpus: only the active video
+		# folder so sibling experiment folders stay intact.
 		if self.labeling_mode == LabelingMode.synced or not self.active_video_path:
 			return self.video_handler.save_labels(save_path)
 
-		handler = self.video_handler
 		if save_path is None:
-			save_dir = Path(handler.video_folder) / "skellyclicker_data"
-			save_dir.mkdir(exist_ok=True, parents=True)
-			from skellyclicker.core.human_labels_io import human_labels_csv_filename
-
-			out = save_dir / human_labels_csv_filename(
-				sorted(v.name for v in handler.videos.values())
+			raise ValueError(
+				"Create or load a DLC project before saving human labels"
 			)
+		save_path_p = Path(save_path).expanduser().resolve()
+		if save_path_p.name == "labeled-data":
+			root = save_path_p
+		elif save_path_p.is_dir() and (save_path_p / "labeled-data").exists():
+			root = save_path_p / "labeled-data"
+		elif save_path_p.name != "labeled-data" and save_path_p.suffix == "":
+			root = save_path_p / "labeled-data"
 		else:
-			out = Path(save_path)
-			if out.is_dir():
-				from skellyclicker.core.human_labels_io import human_labels_csv_filename
+			try:
+				root = resolve_human_labels_root(save_path_p)
+			except ValueError as exc:
+				raise ValueError(
+					"Human labels must be saved to the DLC project labeled-data folder"
+				) from exc
+		root.mkdir(parents=True, exist_ok=True)
 
-				out = out / human_labels_csv_filename(
-					sorted(v.name for v in handler.videos.values())
-				)
-
+		handler = self.video_handler
 		mask = handler.data_handler.dataframe.notna().any(axis=1)
 		new_rows = handler.data_handler.dataframe.loc[mask].reset_index()
-		# Prefer existing corpus path so we don't drop other videos when first save
-		# picks a new default filename next to the active video.
-		existing = self._corpus_labels_path
-		if existing is None and out.is_file():
-			existing = str(out)
-		path = merge_human_label_rows(
-			existing,
-			new_rows,
-			active_video=Path(self.active_video_path).name,
-			output_path=out,
+		active_name = Path(self.active_video_path).name
+		# Absolute paths for every session video so other folders are not touched.
+		video_paths = list(self.session_video_paths) or [
+			str(p) for p in handler.videos.keys()
+		]
+		write_labeled_data_from_wide(
+			labeled_data_root=root,
+			wide_df=new_rows,
+			video_paths=video_paths,
+			joint_names=list(handler.data_handler.config.tracked_point_names),
+			only_videos=[active_name],
 		)
-		self._corpus_labels_path = path
-		return path
+		self._corpus_labels_path = str(root)
+		return str(root)
 
 	def set_active_point(self, point_name: str) -> None:
 		self.video_handler.data_handler.set_active_point_by_name(point_name)

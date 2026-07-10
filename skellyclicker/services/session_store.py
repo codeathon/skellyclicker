@@ -6,7 +6,13 @@ from uuid import uuid4
 
 from skellyclicker.core.session_validation import (
 	bodypart_names_from_csv_columns,
-	validate_label_csv_against_videos,
+)
+from skellyclicker.core.deeplabcut_handler.labeled_data_io import (
+	bodyparts_from_labeled_data,
+	has_human_labels,
+	is_legacy_skellyclicker_csv,
+	labeled_data_dir,
+	resolve_human_labels_root,
 )
 from skellyclicker.services.dlc_job_runner import DLCJobRunner
 from skellyclicker.services.errors import SessionConflictError, SessionError
@@ -224,19 +230,80 @@ class SessionStore:
 
 	def set_human_labels_path(self, path: str) -> AppSession:
 		self._assert_no_active_job()
-		if not Path(path).is_file():
-			raise SessionError(f"CSV not found: {path}")
+		raw = Path(path).expanduser()
+		if not raw.exists():
+			raise SessionError(f"Human labels path not found: {path}")
 		self._teardown_labeler()
-		import pandas as pd
-		df = pd.read_csv(path)
-		self.session.human_labels_path = path
-		self.session.tracked_point_names = bodypart_names_from_csv_columns(list(df.columns))
-		# Warn when CSV video names don't match the session set (corpus / multi-cam).
-		if self.session.videos:
-			warnings = validate_label_csv_against_videos(path, self.session.videos)
-			if warnings:
-				self.session.status_message = "; ".join(warnings)
+
+		# Legacy flat CSV → convert once into the loaded project's labeled-data.
+		if raw.is_file() and is_legacy_skellyclicker_csv(raw):
+			if not self.session.dlc_project_path:
+				raise SessionError(
+					"Create or load a DLC project before importing a legacy labels CSV"
+				)
+			if not self.session.videos:
+				raise SessionError("Select videos before importing human labels")
+			from skellyclicker.core.deeplabcut_handler.create_deeplabcut.create_deeplabcut_project_data import (
+				fill_in_labelled_data_folder,
+			)
+
+			project_dir, _ = resolve_dlc_project_input(self.session.dlc_project_path)
+			fill_in_labelled_data_folder(
+				path_to_videos_for_training=str(Path(self.session.videos[0]).parent),
+				path_to_dlc_project_folder=str(project_dir),
+				path_to_image_labels_csv=str(raw.resolve()),
+				video_paths=list(self.session.videos),
+			)
+			root = labeled_data_dir(project_dir)
+			self.session.human_labels_path = str(root)
+			bodyparts = bodyparts_from_labeled_data(root)
+			if bodyparts:
+				self.session.tracked_point_names = bodyparts
+			self.session.status_message = (
+				f"Imported legacy labels into {root}"
+			)
+			return self._finalize_session()
+
+		try:
+			root = resolve_human_labels_root(raw)
+		except ValueError as exc:
+			raise SessionError(str(exc)) from exc
+		self.session.human_labels_path = str(root)
+		bodyparts = bodyparts_from_labeled_data(root)
+		if bodyparts:
+			self.session.tracked_point_names = bodyparts
+		elif raw.is_file():
+			# Fallback for unexpected flat CSV that wasn't detected as legacy.
+			import pandas as pd
+
+			df = pd.read_csv(raw)
+			self.session.tracked_point_names = bodypart_names_from_csv_columns(
+				list(df.columns)
+			)
+		if self.session.videos and root.is_dir():
+			# Soft validation: warn when no CollectedData matches session videos.
+			if not has_human_labels(root):
+				self.session.status_message = (
+					f"labeled-data has no CollectedData yet: {root}"
+				)
 		return self._finalize_session()
+
+	def _labeled_data_save_path(self) -> str:
+		"""Resolve the DLC labeled-data directory for human-label saves."""
+		if self.session.human_labels_path:
+			try:
+				return str(resolve_human_labels_root(self.session.human_labels_path))
+			except ValueError:
+				pass
+		if not self.session.dlc_project_path:
+			raise SessionError(
+				"Create or load a DLC project before saving human labels"
+			)
+		try:
+			project_dir, _ = resolve_dlc_project_input(self.session.dlc_project_path)
+		except ValueError as exc:
+			raise SessionError(str(exc)) from exc
+		return str(labeled_data_dir(project_dir))
 
 	def set_machine_labels_path(self, path: str) -> AppSession:
 		self._assert_no_active_job()
@@ -434,11 +501,13 @@ class SessionStore:
 				raise SessionError(f"Video not in session: {video_path}")
 		if resolved == self.session.active_video_path:
 			return self.session
-		# Persist current video's labels into the corpus CSV before switching.
-		if self.session.human_labels_path:
-			self.save_labeler(self.session.human_labels_path)
-		else:
+		# Persist current video's labels into labeled-data before switching.
+		if self.session.human_labels_path or self.session.dlc_project_path:
 			self.save_labeler(None)
+		else:
+			raise SessionError(
+				"Create or load a DLC project before switching videos (labels must be saved)"
+			)
 		self.session.active_video_path = resolved
 		self._teardown_labeler()
 		return self.open_labeler()
@@ -456,22 +525,30 @@ class SessionStore:
 		"""Block writes that would overwrite the machine-labels CSV from the labeler."""
 		if not save_path or not self.session.machine_labels_path:
 			return
-		if Path(save_path).resolve() == Path(self.session.machine_labels_path).resolve():
-			raise SessionError(
-				"Cannot save human labels to the machine labels file. "
-				"Pick a human labels path (e.g. skellyclicker_labels.csv)."
-			)
+		try:
+			if Path(save_path).resolve() == Path(self.session.machine_labels_path).resolve():
+				raise SessionError(
+					"Cannot save human labels to the machine labels file. "
+					"Human labels are stored in the DLC project labeled-data folder."
+				)
+		except OSError:
+			return
 
 	def save_labeler(self, save_path: str | None = None) -> AppSession:
 		if not self.labeling_engine:
 			raise SessionError("Labeler is not open")
-		self._assert_human_label_save_path(save_path)
+		# Always write to project labeled-data — ignore client-picked skellyclicker paths.
+		target = self._labeled_data_save_path()
+		self._assert_human_label_save_path(target)
 		engine = self.labeling_engine
 		handler = engine.video_handler.data_handler
 		tracked_names = list(handler.config.tracked_point_names)
-		path = engine.save_labels(save_path)
+		try:
+			path = engine.save_labels(target)
+		except ValueError as exc:
+			raise SessionError(str(exc)) from exc
 		if not path:
-			raise SessionError("Could not save labels to CSV.")
+			raise SessionError("Could not save labels to labeled-data.")
 		self.session.human_labels_path = path
 		self.session.tracked_point_names = tracked_names
 		self.session.labeled_frame_count = self._labeled_frame_count(engine)
@@ -481,14 +558,18 @@ class SessionStore:
 	def close_labeler(self, save: bool, save_path: str | None = None) -> AppSession:
 		if not self.labeling_engine:
 			raise SessionError("Labeler is not open")
+		target = self._labeled_data_save_path() if save else None
 		if save:
-			self._assert_human_label_save_path(save_path)
+			self._assert_human_label_save_path(target)
 		engine = self.labeling_engine
 		labeling_id = engine.session_id
 		handler = engine.video_handler.data_handler
 		tracked_names = list(handler.config.tracked_point_names)
 		labeled_count = self._labeled_frame_count(engine)
-		path = engine.close(save=save, save_path=save_path)
+		try:
+			path = engine.close(save=save, save_path=target)
+		except ValueError as exc:
+			raise SessionError(str(exc)) from exc
 		if self.session.labeling_session_id != labeling_id:
 			if save and path:
 				raise SessionError(
@@ -499,9 +580,8 @@ class SessionStore:
 		if save:
 			if not path:
 				raise SessionError(
-					"Could not save labels to CSV. Try closing the labeler again."
+					"Could not save labels to labeled-data. Try closing the labeler again."
 				)
-			# Labeler output is always human labels (legacy UI: csv_saved_path).
 			self.session.human_labels_path = path
 			self.session.tracked_point_names = tracked_names
 			self.session.status_message = f"Labels saved to {path}"
@@ -534,6 +614,13 @@ class SessionStore:
 		self._sync_dlc_iteration_from_handler()
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
+		# Reuse existing DLC human labels when present (single source of truth).
+		labeled_root = labeled_data_dir(project_dir)
+		if has_human_labels(labeled_root):
+			self.session.human_labels_path = str(labeled_root)
+			bodyparts = bodyparts_from_labeled_data(labeled_root)
+			if bodyparts and not self.session.tracked_point_names:
+				self.session.tracked_point_names = bodyparts
 		# Loading a project must not keep another project's machine CSV in Loaded Assets.
 		# Full Analysis / Import Machine Labels set this path when needed.
 		self.session.machine_labels_path = None

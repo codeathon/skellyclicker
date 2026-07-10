@@ -115,18 +115,36 @@ class DataHandler(BaseModel):
         )
 
     @classmethod
-    def from_csv(
+    def from_wide_dataframe(
         cls,
-        input_path: str | Path,
+        raw: pd.DataFrame,
         *,
         video_names: list[str] | None = None,
         num_frames: int | None = None,
         tracked_point_names: list[str] | None = None,
+        source_label: str = "labels",
     ):
-        raw = pd.read_csv(input_path)
-        raw["video"] = raw["video"].astype(str)
-        csv_bodyparts = bodypart_names_from_csv_columns(list(raw.columns))
-        sparse = raw.set_index(["video", "frame"])
+        """Build a handler from flat video/frame/{bp}_x|y rows (CSV or labeled-data)."""
+        work = raw.copy()
+        if work.empty:
+            if not tracked_point_names:
+                raise ValueError(f"No bodyparts found in {source_label}")
+            if video_names is None:
+                raise ValueError(f"video_names required for empty {source_label}")
+            if num_frames is None:
+                num_frames = 1
+            return cls.from_config(
+                DataHandlerConfig(
+                    num_frames=num_frames,
+                    video_names=video_names,
+                    tracked_point_names=list(tracked_point_names),
+                )
+            )
+        if "video" not in work.columns or "frame" not in work.columns:
+            raise ValueError(f"{source_label} must have 'video' and 'frame' columns")
+        work["video"] = work["video"].astype(str)
+        csv_bodyparts = bodypart_names_from_csv_columns(list(work.columns))
+        sparse = work.set_index(["video", "frame"])
         # DLC analyze output can repeat (video, frame) rows — keep first.
         sparse = sparse[~sparse.index.duplicated(keep="first")]
 
@@ -140,7 +158,7 @@ class DataHandler(BaseModel):
             names = csv_bodyparts
 
         if not names:
-            raise ValueError(f"No bodyparts found in labels CSV: {input_path}")
+            raise ValueError(f"No bodyparts found in {source_label}")
 
         if video_names is None:
             video_names = sorted(sparse.index.get_level_values("video").unique().tolist())
@@ -164,6 +182,24 @@ class DataHandler(BaseModel):
             config=config,
             dataframe=dataframe,
             active_point=names[0],
+        )
+
+    @classmethod
+    def from_csv(
+        cls,
+        input_path: str | Path,
+        *,
+        video_names: list[str] | None = None,
+        num_frames: int | None = None,
+        tracked_point_names: list[str] | None = None,
+    ):
+        raw = pd.read_csv(input_path)
+        return cls.from_wide_dataframe(
+            raw,
+            video_names=video_names,
+            num_frames=num_frames,
+            tracked_point_names=tracked_point_names,
+            source_label=str(input_path),
         )
 
     @classmethod
