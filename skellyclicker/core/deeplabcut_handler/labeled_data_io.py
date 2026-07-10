@@ -80,6 +80,63 @@ def collected_data_csv_path(
 	return folder / f"CollectedData_{scorer_name}.csv"
 
 
+def _write_collected_data_pair(df: pd.DataFrame, folder: Path, scorer_name: str) -> Path:
+	"""Write CollectedData CSV + H5 the way DeepLabCut expects.
+
+	DLC's create_training_dataset reads the H5 via ``pd.read_hdf``. Writing with
+	``format="table"`` or object dtypes produces files that raise:
+	"Dataset(s) incompatible with Pandas data types, not table, or no datasets found".
+	"""
+	folder = Path(folder)
+	folder.mkdir(parents=True, exist_ok=True)
+	csv_path = collected_data_csv_path(folder, scorer_name)
+	h5_path = folder / f"CollectedData_{scorer_name}.h5"
+
+	# Coerce coordinates to float so HDF5 gets numeric columns, not object.
+	if len(df.columns) and len(df.index):
+		df = df.apply(pd.to_numeric, errors="coerce")
+
+	df.to_csv(csv_path)
+
+	# Remove a stale/broken H5 before rewriting so DLC never opens a bad file.
+	if h5_path.exists():
+		h5_path.unlink()
+
+	if df.empty:
+		# Empty labels: CSV headers only; skip H5 (empty MultiIndex stores break DLC).
+		return csv_path
+
+	# Round-trip through CSV so MultiIndex matches DLC's on-disk layout, then
+	# write fixed-format H5 (DLC default — not format="table").
+	reloaded = pd.read_csv(csv_path, header=[0, 1, 2], index_col=0)
+	reloaded.columns = reloaded.columns.set_names(["scorer", "bodyparts", "coords"])
+	try:
+		reloaded.to_hdf(
+			str(h5_path),
+			key="df_with_missing",
+			mode="w",
+			format="fixed",
+		)
+	except ImportError:
+		logger.warning(
+			"PyTables (tables) not installed; wrote CSV only (%s). "
+			"Install pytables so DeepLabCut can read CollectedData_*.h5.",
+			csv_path,
+		)
+		return csv_path
+
+	# Fail fast if the file cannot be read back the way DLC will.
+	try:
+		pd.read_hdf(str(h5_path), key="df_with_missing")
+	except Exception as exc:
+		h5_path.unlink(missing_ok=True)
+		raise RuntimeError(
+			f"Wrote {h5_path} but pandas cannot read it back (DLC will fail): {exc}"
+		) from exc
+
+	return csv_path
+
+
 def has_human_labels(labeled_data: str | Path) -> bool:
 	"""True when any CollectedData_*.csv exists under labeled-data."""
 	root = Path(labeled_data).expanduser().resolve()
@@ -231,14 +288,7 @@ def write_video_labeled_data(
 
 	if video_rows.empty:
 		# Empty labels: still write empty CollectedData so the folder is valid.
-		csv_path = collected_data_csv_path(folder, scorer_name)
-		df.to_csv(csv_path)
-		h5_path = folder / f"CollectedData_{scorer_name}.h5"
-		try:
-			df.to_hdf(str(h5_path), key="df_with_missing", format="table", mode="w")
-		except ImportError:
-			logger.warning("pytables not installed; skipped writing %s", h5_path)
-		return csv_path
+		return _write_collected_data_pair(df, folder, scorer_name)
 
 	if not video_path.is_file():
 		raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -274,14 +324,7 @@ def write_video_labeled_data(
 	finally:
 		cap.release()
 
-	csv_path = collected_data_csv_path(folder, scorer_name)
-	df.to_csv(csv_path)
-	# H5 is preferred by DLC but optional when pytables is unavailable.
-	h5_path = folder / f"CollectedData_{scorer_name}.h5"
-	try:
-		df.to_hdf(str(h5_path), key="df_with_missing", format="table", mode="w")
-	except ImportError:
-		logger.warning("pytables not installed; skipped writing %s", h5_path)
+	csv_path = _write_collected_data_pair(df, folder, scorer_name)
 	logger.info("Saved DLC human labels to %s", csv_path)
 	return csv_path
 
