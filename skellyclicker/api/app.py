@@ -35,10 +35,35 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="SkellyClicker", version="0.2.0", lifespan=_lifespan)
 
 
+@app.get("/api/health")
+def health() -> dict:
+	"""Full read-only debug dump — only runs when this endpoint is hit (no other overhead)."""
+	from skellyclicker.services.health_debug import build_health_debug
+
+	return build_health_debug(store, repo_root=REPO_ROOT)
+
+
 @app.exception_handler(SessionError)
 async def session_error_handler(_request, exc: SessionError):
 	status = 409 if isinstance(exc, SessionConflictError) else 400
 	return JSONResponse(status_code=status, content={"detail": exc.message})
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request, exc: Exception):
+	"""Surface unexpected errors as JSON detail instead of a bare Internal Server Error."""
+	# HTTPException subclasses Exception — re-emit as a normal HTTP response.
+	from starlette.exceptions import HTTPException as StarletteHTTPException
+
+	if isinstance(exc, StarletteHTTPException):
+		return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+	logging.getLogger("skellyclicker.api").exception(
+		"Unhandled API error on %s", request.url.path
+	)
+	return JSONResponse(
+		status_code=500,
+		content={"detail": f"{type(exc).__name__}: {exc}"},
+	)
 
 
 app.add_middleware(
@@ -313,17 +338,28 @@ def create_dlc(body: CreateProjectBody) -> AppSession:
 	store.session.dlc_project_path = full_path
 	store.session.dlc_iteration = handler.iteration
 	store.session.tracked_point_names = bodyparts
-	# New project has no trained weights and no project-local machine CSV —
-	# drop leftover live runners / video-folder CSVs from a prior project.
+	# New project has no trained weights and no machine CSV for this session —
+	# drop leftover live runners / machine path from a prior project.
 	store._close_live_inference()
 	store.session.machine_labels_path = None
 	store.session.workflow_state = WorkflowState.ready_to_train
-	return store.get_session()
+	# Finalize without re-attaching disk CSVs (sync no longer invents a path).
+	return store._finalize_session()
 
 
 @app.post("/api/labeling/open", response_model=AppSession)
 def open_labeler() -> AppSession:
-	return store.open_labeler()
+	# Catch everything here so the UI never sees a bare "Internal Server Error"
+	# (proxy/statusText) without a useful detail string.
+	try:
+		return store.open_labeler()
+	except SessionError:
+		raise
+	except Exception as exc:
+		logging.getLogger("skellyclicker.api").exception("labeling/open failed")
+		raise SessionError(
+			f"Could not open labeler: {type(exc).__name__}: {exc}"
+		) from exc
 
 
 @app.post("/api/labeling/close", response_model=AppSession)

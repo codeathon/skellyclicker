@@ -18,7 +18,6 @@ from skellyclicker.services.workflow import refresh_workflow_state
 
 from skellyclicker.services.dlc_paths import (
 	resolve_dlc_project_input,
-	resolve_latest_machine_labels_path,
 )
 
 
@@ -38,31 +37,29 @@ class SessionStore:
 		return self._finalize_session()
 
 	def _sync_machine_labels_path_to_latest(self) -> None:
-		"""Point session at the newest machine-labels CSV under the loaded DLC project.
+		"""Validate an existing machine-labels path; never invent one from disk.
 
-		Search the project tree only — never video-folder leftovers from a previous
-		project on the same videos (those can show the wrong bodypart count).
+		Loaded Assets must stay empty until Full Analysis or Import Machine Labels
+		sets ``machine_labels_path``. Do not upgrade/replace an existing path by
+		scanning the project tree — that re-surfaces leftover CSVs.
 		"""
+		current = self.session.machine_labels_path
+		if not current:
+			return
+		# Drop missing files so the UI does not show a dead path.
+		if not Path(current).expanduser().is_file():
+			self.session.machine_labels_path = None
+			return
 		if not self.session.dlc_project_path:
 			return
 		try:
-			project_dir, config_path = resolve_dlc_project_input(
-				self.session.dlc_project_path
-			)
+			project_dir, _ = resolve_dlc_project_input(self.session.dlc_project_path)
 		except ValueError:
-			return
-		# video_paths=None: do not pick up *_model_outputs next to videos.
-		latest = resolve_latest_machine_labels_path(str(config_path), video_paths=None)
-		if latest is not None:
-			self.session.machine_labels_path = str(latest)
-			return
-		# No project-local CSV: drop a stale path that lives outside this project.
-		current = self.session.machine_labels_path
-		if not current:
 			return
 		try:
 			Path(current).expanduser().resolve().relative_to(project_dir.resolve())
 		except (ValueError, OSError):
+			# Path is outside the loaded project (e.g. video-folder leftover).
 			self.session.machine_labels_path = None
 
 	def _finalize_session(self) -> AppSession:
@@ -183,6 +180,9 @@ class SessionStore:
 		"""Store video list and reset frame stats; close labeler if video set changed."""
 		if paths != (self.session.videos or []):
 			self._teardown_labeler()
+			# Changing videos must not keep a previous analyze CSV in Loaded Assets.
+			# Full Analysis / Import Machine Labels set the path when a file is produced.
+			self.session.machine_labels_path = None
 		self.session.videos = paths if paths else None
 		self.session.frame_count = 0
 		self._refresh_labeling_mode(paths)
@@ -196,7 +196,7 @@ class SessionStore:
 	def set_videos(self, paths: list[str]) -> AppSession:
 		self._assert_no_active_job()
 		self._apply_videos(self._validate_video_paths(paths))
-		return self.session
+		return self._finalize_session()
 
 	def add_videos(self, paths: list[str]) -> AppSession:
 		"""Append videos to the session list (deduplicated, order preserved)."""
@@ -209,7 +209,7 @@ class SessionStore:
 				existing.append(path)
 				seen.add(path)
 		self._apply_videos(existing)
-		return self.session
+		return self._finalize_session()
 
 	def remove_video(self, path: str) -> AppSession:
 		"""Drop one video from the session list."""
@@ -310,6 +310,15 @@ class SessionStore:
 			raise SessionError("Select videos first")
 		# Re-detect in case session JSON was loaded with a stale mode.
 		self._refresh_labeling_mode(videos)
+		# Hard rule until synced multi-cam is an explicit opt-in: never open a
+		# multi-video grid. Training-corpus sessions always label one at a time.
+		if len(videos) > 1:
+			self.session.labeling_mode = LabelingMode.corpus
+			active = self.session.active_video_path or videos[0]
+			if active not in videos:
+				active = videos[0]
+			self.session.active_video_path = active
+			return [active]
 		if self.session.labeling_mode == LabelingMode.synced:
 			return videos
 		active = self.session.active_video_path or videos[0]
@@ -317,6 +326,41 @@ class SessionStore:
 			raise SessionError(f"Active video not in session: {active}")
 		self.session.active_video_path = active
 		return [active]
+
+	def _open_labeling_engine(self, open_paths: list[str]) -> LabelingEngine:
+		"""Construct LabelingEngine for the current session mode/paths."""
+		return LabelingEngine.open(
+			video_paths=open_paths,
+			human_labels_path=self.session.human_labels_path,
+			machine_labels_path=self.session.machine_labels_path,
+			# Web labeler always edits human labels; machine CSV is overlay-only.
+			train_on_machine_labels=False,
+			tracked_point_names=list(self.session.tracked_point_names),
+			labeling_mode=self.session.labeling_mode,
+			session_video_paths=list(self.session.videos or []),
+			active_video_path=self.session.active_video_path,
+		)
+
+	def _open_labeling_engine_as_corpus(self) -> tuple[LabelingEngine, list[str]]:
+		"""Force one-video corpus open after a synced/multi-path failure."""
+		videos = list(self.session.videos or [])
+		active = self.session.active_video_path or videos[0]
+		if active not in videos:
+			active = videos[0]
+		self.session.labeling_mode = LabelingMode.corpus
+		self.session.active_video_path = active
+		open_paths = [active]
+		engine = LabelingEngine.open(
+			video_paths=open_paths,
+			human_labels_path=self.session.human_labels_path,
+			machine_labels_path=self.session.machine_labels_path,
+			train_on_machine_labels=False,
+			tracked_point_names=list(self.session.tracked_point_names),
+			labeling_mode=LabelingMode.corpus,
+			session_video_paths=videos,
+			active_video_path=active,
+		)
+		return engine, open_paths
 
 	def open_labeler(self) -> AppSession:
 		self._assert_no_active_job()
@@ -331,17 +375,22 @@ class SessionStore:
 		open_paths = self._labeler_video_paths()
 		# Best-effort warm model for on-the-fly scrub predictions (corpus/single).
 		self._ensure_live_inference()
-		engine = LabelingEngine.open(
-			video_paths=open_paths,
-			human_labels_path=self.session.human_labels_path,
-			machine_labels_path=self.session.machine_labels_path,
-			# Web labeler always edits human labels; machine CSV is overlay-only.
-			train_on_machine_labels=False,
-			tracked_point_names=list(self.session.tracked_point_names),
-			labeling_mode=self.session.labeling_mode,
-			session_video_paths=list(self.session.videos),
-			active_video_path=self.session.active_video_path,
-		)
+		try:
+			engine = self._open_labeling_engine(open_paths)
+		except Exception as exc:
+			# Never leave the UI with an unhandled 500 for multi-video opens.
+			# Synced mis-detect (lying CAP_PROP / mixed folders) is the usual cause.
+			msg = str(exc)
+			can_fallback = len(self.session.videos or []) > 1 and len(open_paths) > 1
+			if can_fallback:
+				try:
+					engine, open_paths = self._open_labeling_engine_as_corpus()
+				except Exception as fallback_exc:
+					raise SessionError(
+						f"Could not open labeler: {fallback_exc}"
+					) from fallback_exc
+			else:
+				raise SessionError(f"Could not open labeler: {msg}") from exc
 		if self.live_inference is not None and self.live_inference.ready:
 			engine.attach_live_inference(self.live_inference)
 		self.labeling_engine = engine
@@ -367,7 +416,7 @@ class SessionStore:
 			)
 		else:
 			self.session.status_message = f"Labeling{live_note}"
-		return self.session
+		return self._finalize_session()
 
 	def set_active_labeling_video(self, video_path: str) -> AppSession:
 		"""Switch the corpus/single labeler to another session video (merge-save first)."""
@@ -485,6 +534,9 @@ class SessionStore:
 		self._sync_dlc_iteration_from_handler()
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
+		# Loading a project must not keep another project's machine CSV in Loaded Assets.
+		# Full Analysis / Import Machine Labels set this path when needed.
+		self.session.machine_labels_path = None
 		# Warm live runners only if this project has trained weights; else clear.
 		self._ensure_live_inference()
 		return self._finalize_session()
@@ -532,6 +584,9 @@ class SessionStore:
 		data = json.loads(target.read_text())
 		self.session = AppSession.model_validate(data)
 		self.session.session_saved_path = str(target.resolve())
+		# Do not restore machine CSV into Loaded Assets from an old session file —
+		# Full Analysis / Import Machine Labels set this path when a file is produced.
+		self.session.machine_labels_path = None
 		# Re-detect mode from current video files (stale session JSON is OK).
 		if self.session.videos:
 			try:

@@ -1,6 +1,7 @@
 """Tests for web session store lifecycle (Phase A regressions)."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -142,6 +143,9 @@ def test_close_labeler_save_registers_human_labels(fresh_store, tmp_path):
 
 	csv_path = tmp_path / "labels.csv"
 	csv_path.write_text("video,frame,nose_x,nose_y\ncam1,0,1.0,2.0\n")
+	# Real file: finalize drops missing machine paths so Loaded Assets stays honest.
+	machine_csv = tmp_path / "machine.csv"
+	machine_csv.write_text("video,frame,nose_x,nose_y\n")
 
 	mock_engine = MagicMock()
 	mock_engine.session_id = "label-session-1"
@@ -151,12 +155,12 @@ def test_close_labeler_save_registers_human_labels(fresh_store, tmp_path):
 	fresh_store.labeling_engine = mock_engine
 	fresh_store.session.labeling_session_id = "label-session-1"
 	fresh_store.session.train_on_machine_labels = True
-	fresh_store.session.machine_labels_path = "/tmp/machine.csv"
+	fresh_store.session.machine_labels_path = str(machine_csv)
 
 	fresh_store.close_labeler(save=True, save_path=str(csv_path))
 
 	assert fresh_store.session.human_labels_path == str(csv_path)
-	assert fresh_store.session.machine_labels_path == "/tmp/machine.csv"
+	assert fresh_store.session.machine_labels_path == str(machine_csv)
 	assert fresh_store.labeling_engine is None
 	assert "Labels saved to" in fresh_store.session.status_message
 
@@ -199,7 +203,8 @@ def test_save_labeler_rejects_machine_labels_path(fresh_store, tmp_path):
 		fresh_store.save_labeler(save_path=str(machine_csv))
 
 
-def test_finalize_session_points_machine_labels_at_latest_csv(fresh_store, tmp_path):
+def test_finalize_session_keeps_existing_project_machine_labels(fresh_store, tmp_path):
+	"""An analyze-set path under the project stays; sync does not invent a newer one."""
 	project = tmp_path / "proj"
 	project.mkdir()
 	config = project / "config.yaml"
@@ -223,7 +228,60 @@ def test_finalize_session_points_machine_labels_at_latest_csv(fresh_store, tmp_p
 	fresh_store.session.dlc_project_path = str(project)
 	fresh_store.session.machine_labels_path = str(old_csv)
 	session = fresh_store.get_session()
-	assert session.machine_labels_path == str(new_csv.resolve())
+	# Sync no longer auto-upgrades to newest on disk — only analyze/import set the path.
+	assert session.machine_labels_path == str(old_csv)
+
+
+def test_finalize_does_not_invent_machine_labels_when_unset(fresh_store, tmp_path):
+	"""Loaded Assets must stay empty until analyze/import sets machine labels."""
+	project = tmp_path / "proj"
+	project.mkdir()
+	(project / "config.yaml").write_text("Task: test\niteration: 1\n")
+	csv = (
+		project
+		/ "model_outputs"
+		/ "model_outputs_iteration_1"
+		/ "skellyclicker_machine_labels_iteration_1.csv"
+	)
+	csv.parent.mkdir(parents=True)
+	csv.write_text("video,frame,nose_x,nose_y\n")
+
+	fresh_store.session.dlc_project_path = str(project)
+	fresh_store.session.machine_labels_path = None
+	session = fresh_store.get_session()
+	assert session.machine_labels_path is None
+
+
+def test_load_session_json_clears_machine_labels(fresh_store, tmp_path):
+	"""Loading a session file must not re-surface a stale machine CSV in assets."""
+	session_file = tmp_path / "session.json"
+	machine = tmp_path / "skellyclicker_machine_labels_iteration_0.csv"
+	machine.write_text("video,frame,nose_x,nose_y\n")
+	fresh_store.session.machine_labels_path = str(machine)
+	fresh_store.session.videos = None
+	session_file.write_text(
+		fresh_store.session.model_dump_json(indent=2, exclude={"asset_path_checks"})
+	)
+	fresh_store.session.machine_labels_path = None
+	session = fresh_store.load_session_json(str(session_file))
+	assert session.machine_labels_path is None
+
+
+def test_add_videos_clears_machine_labels_from_assets(fresh_store, tmp_path):
+	"""Adding videos must clear Loaded Assets machine path (not auto-discover)."""
+	v1 = tmp_path / "a.mp4"
+	v1.write_bytes(b"x")
+	fresh_store.session.machine_labels_path = str(
+		tmp_path / "old_model_outputs_iteration_0" / "skellyclicker_machine_labels_iteration_0.csv"
+	)
+	with patch(
+		"skellyclicker.services.session_store.detect_labeling_mode",
+		return_value=__import__(
+			"skellyclicker.services.models", fromlist=["LabelingMode"]
+		).LabelingMode.single,
+	):
+		session = fresh_store.add_videos([str(v1)])
+	assert session.machine_labels_path is None
 
 
 def test_finalize_clears_stale_video_folder_machine_labels(fresh_store, tmp_path):
@@ -245,6 +303,42 @@ def test_finalize_clears_stale_video_folder_machine_labels(fresh_store, tmp_path
 	fresh_store.session.machine_labels_path = str(stale)
 	session = fresh_store.get_session()
 	assert session.machine_labels_path is None
+
+
+def test_load_dlc_project_clears_prior_machine_labels(fresh_store, tmp_path, monkeypatch):
+	"""Switching projects must not keep the previous machine CSV in assets."""
+	project = tmp_path / "proj"
+	project.mkdir()
+	config = project / "config.yaml"
+	config.write_text("Task: t\niteration: 0\n")
+
+	class _Fake:
+		iteration = 0
+		tracked_point_names = ["nose"]
+		project_config_path = str(config)
+
+	# Avoid importing deeplabcut in unit tests — stub the handler load path.
+	import types
+	import sys
+
+	fake_mod = types.ModuleType("skellyclicker.core.deeplabcut_handler.deeplabcut_handler")
+
+	class DeeplabcutHandler:
+		@classmethod
+		def load_deeplabcut_project(cls, project_config_path: str):
+			return _Fake()
+
+	fake_mod.DeeplabcutHandler = DeeplabcutHandler
+	monkeypatch.setitem(
+		sys.modules,
+		"skellyclicker.core.deeplabcut_handler.deeplabcut_handler",
+		fake_mod,
+	)
+	fresh_store.session.machine_labels_path = "/tmp/old_machine.csv"
+	# Also stub live-inference so load does not need a real model tree.
+	monkeypatch.setattr(fresh_store, "_ensure_live_inference", lambda: None)
+	fresh_store.load_dlc_project(str(project))
+	assert fresh_store.session.machine_labels_path is None
 
 
 def test_ensure_live_inference_skips_without_trained_weights(fresh_store, tmp_path):

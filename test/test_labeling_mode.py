@@ -4,6 +4,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from skellyclicker.services.labeling_mode import LabelingMode, detect_labeling_mode
+from skellyclicker.services.models import LabelingMode as ModelLabelingMode
+
+# Keep a single LabelingMode symbol (models re-exports the same enum).
+assert LabelingMode is ModelLabelingMode
 
 
 def test_detect_single_video():
@@ -12,8 +16,27 @@ def test_detect_single_video():
 
 
 def test_detect_synced_equal_frame_counts():
+	# Synced auto-detect is disabled — 2+ videos always open as corpus.
 	with patch("skellyclicker.services.labeling_mode.probe_video_frame_count", return_value=100):
-		assert detect_labeling_mode(["/a/cam0.mp4", "/a/cam1.mp4"]) == LabelingMode.synced
+		assert detect_labeling_mode(["/a/cam0.mp4", "/a/cam1.mp4"]) == LabelingMode.corpus
+
+
+def test_detect_corpus_when_frame_count_is_zero():
+	"""CAP_PROP 0 is unreliable — must not open as synced multi-cam."""
+	with patch("skellyclicker.services.labeling_mode.probe_video_frame_count", return_value=0):
+		assert detect_labeling_mode(["/a/cam0.mp4", "/a/cam1.mp4"]) == LabelingMode.corpus
+
+
+def test_detect_corpus_different_parent_folders(tmp_path: Path):
+	"""Videos from different experiment folders are corpus even if lengths match."""
+	a = tmp_path / "expA" / "cam.mp4"
+	b = tmp_path / "expB" / "cam.mp4"
+	a.parent.mkdir()
+	b.parent.mkdir()
+	a.write_bytes(b"x")
+	b.write_bytes(b"x")
+	with patch("skellyclicker.services.labeling_mode.probe_video_frame_count", return_value=100):
+		assert detect_labeling_mode([str(a), str(b)]) == LabelingMode.corpus
 
 
 def test_detect_corpus_unequal_frame_counts():
@@ -43,3 +66,69 @@ def test_session_store_sets_mode_on_add_videos(tmp_path: Path):
 		store.add_videos([str(a), str(b)])
 	assert store.session.labeling_mode == LabelingMode.corpus
 	assert store.session.active_video_path == str(a.resolve())
+
+
+def test_labeler_paths_force_corpus_for_multiple_videos(tmp_path: Path):
+	"""2+ videos must never open as a synced grid (one path only)."""
+	from skellyclicker.services.session_store import SessionStore
+
+	a = tmp_path / "short.mp4"
+	b = tmp_path / "long.mp4"
+	a.write_bytes(b"x")
+	b.write_bytes(b"x")
+	store = SessionStore()
+	store.session.videos = [str(a), str(b)]
+	store.session.labeling_mode = LabelingMode.synced
+	store.session.active_video_path = None
+
+	with patch(
+		"skellyclicker.services.session_store.detect_labeling_mode",
+		return_value=LabelingMode.synced,
+	):
+		paths = store._labeler_video_paths()
+
+	assert store.session.labeling_mode == LabelingMode.corpus
+	assert paths == [str(a)]
+
+
+def test_open_labeler_falls_back_when_synced_open_rejects_unequal(tmp_path: Path):
+	"""ValueError from VideoHandler must become corpus open, not HTTP 500."""
+	from skellyclicker.services.session_store import SessionStore
+
+	a = tmp_path / "a.mp4"
+	b = tmp_path / "b.mp4"
+	a.write_bytes(b"x")
+	b.write_bytes(b"x")
+	store = SessionStore()
+	store.session.videos = [str(a.resolve()), str(b.resolve())]
+	store.session.labeling_mode = LabelingMode.synced
+	store.session.tracked_point_names = ["nose"]
+	store.session.dlc_project_path = str(tmp_path)
+
+	fake_engine = MagicMock()
+	fake_engine.session_id = "sid"
+	fake_engine.video_handler.frame_count = 10
+	fake_engine.video_handler.data_handler.config.tracked_point_names = ["nose"]
+
+	calls: list[list[str]] = []
+
+	def _open(**kwargs):
+		calls.append(list(kwargs["video_paths"]))
+		if len(kwargs["video_paths"]) > 1:
+			raise ValueError("All videos must have the same number of images")
+		return fake_engine
+
+	# Bypass path selection so we still exercise the open-time corpus fallback.
+	with patch.object(
+		store, "_labeler_video_paths", return_value=[str(a.resolve()), str(b.resolve())]
+	), patch.object(store, "_ensure_live_inference"), patch(
+		"skellyclicker.services.labeling_engine.LabelingEngine.open",
+		side_effect=_open,
+	):
+		store.session.labeling_mode = LabelingMode.synced
+		session = store.open_labeler()
+
+	assert session.labeling_mode == LabelingMode.corpus
+	assert calls[0] == [str(a.resolve()), str(b.resolve())]
+	assert calls[1] == [str(a.resolve())]
+	assert store.labeling_engine is fake_engine

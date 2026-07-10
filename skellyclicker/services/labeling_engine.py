@@ -211,6 +211,9 @@ class LabelingEngine(BaseModel):
 			return
 		# Sticky-aware lookup for scrub; exact frame when sticky is off.
 		self.video_handler.live_points_lookup = service.get_overlay_points
+		# Live guide starts visible; m toggles both live and CSV machine overlays.
+		if service.ready:
+			self.show_machine_labels = True
 
 	def _live_infer_video_path(self) -> str | None:
 		"""Active video path for live scrub infer (corpus/single)."""
@@ -223,6 +226,9 @@ class LabelingEngine(BaseModel):
 
 	def _maybe_request_live_infer(self, frame_number: int) -> None:
 		"""Kick coalesced background infer for the active video when CSV has no row."""
+		# Respect m toggle — do not burn GPU while machine overlay is hidden.
+		if not self.show_machine_labels:
+			return
 		service = self._live_inference
 		if service is None or not service.ready:
 			return
@@ -243,6 +249,8 @@ class LabelingEngine(BaseModel):
 		"""On committed frames, wait briefly so the first paint can include live crosses."""
 		import time
 
+		if not self.show_machine_labels:
+			return
 		service = self._live_inference
 		video_path = self._live_infer_video_path()
 		if service is None or not service.ready or not video_path:
@@ -279,24 +287,24 @@ class LabelingEngine(BaseModel):
 				live = self._live_inference
 				has_csv = bool(self.video_handler.machine_labels_path)
 				has_live = bool(live and live.ready)
+				# m toggles both saved CSV overlays and live on-the-fly predictions.
+				want_machine = self.show_machine_labels and (has_csv or has_live)
 				if preview:
 					# Scrub: sticky last/nearby live points so crosses stay visible
 					# while coalesced infer lags behind a fast drag.
-					self.video_handler.show_machine_labels = has_csv or has_live
-					self.video_handler.live_overlay_sticky = has_live
-					if has_csv:
+					self.video_handler.show_machine_labels = want_machine
+					self.video_handler.live_overlay_sticky = want_machine and has_live
+					if want_machine and has_csv:
 						self.video_handler.ensure_machine_labels_loaded()
-					if has_live:
+					if want_machine and has_live:
 						self._maybe_request_live_infer(render_at)
 				else:
 					# Stopped/committed frame: prefer exact-frame cache (not sticky).
 					self.video_handler.live_overlay_sticky = False
-					self.video_handler.show_machine_labels = (
-						self.show_machine_labels or has_live
-					)
-					if has_csv and self.show_machine_labels:
+					self.video_handler.show_machine_labels = want_machine
+					if want_machine and has_csv:
 						self.video_handler.ensure_machine_labels_loaded()
-					if has_live:
+					if want_machine and has_live:
 						self._maybe_request_live_infer(render_at)
 						# Brief wait so release-scrub paint often includes the guide.
 						self._wait_briefly_for_live_cache(render_at)

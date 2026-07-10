@@ -437,6 +437,12 @@ export default function App() {
 
               <div className="session-actions">
                 <button
+                  onClick={() => run(client.newSession)}
+                  title="Clear videos, labels, and DLC paths from this session"
+                >
+                  New Session
+                </button>
+                <button
                   onClick={async () => {
                     const defaultName = session.session_saved_path
                       ? session.session_saved_path.split(/[/\\]/).pop() ??

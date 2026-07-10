@@ -27,7 +27,7 @@ function isIgnorableFetchError(err: unknown): boolean {
 const WEB_FULL_HELP_TEXT = `Click the video to place the active bodypart.
 Use 'a' / 'd' or arrow keys for previous / next frame.
 Drag the frame slider to scrub previews.
-Press 'm' to toggle machine label overlay.
+Press 'm' to toggle machine / live prediction overlay.
 Press 'n' to toggle bodypart names on the video.
 Press 'h' to hide this help.
 Press Esc to close (prompts to save).
@@ -942,8 +942,8 @@ export function LabelingCanvas({
 				{scrubbing && !playing && (state.has_machine_labels || state.live_inference_ready) && (
 					<p className="hint scrub-hint">
 						{state.live_inference_ready
-							? "Live machine preview (not saved) — release to label this frame"
-							: "Machine predictions shown while scrubbing — release to label"}
+							? "Live machine preview (not saved) — m toggles · release to label"
+							: "Machine predictions while scrubbing — m toggles · release to label"}
 					</p>
 				)}
 				{scrubbing && !playing && !state.has_machine_labels && !state.live_inference_ready && (
@@ -951,7 +951,9 @@ export function LabelingCanvas({
 				)}
 				{!scrubbing && !playing && state.live_inference_ready && (
 					<p className="hint scrub-hint">
-						Click to place human labels on this frame (live preview is not saved)
+						{state.show_machine_labels
+							? "Live preview on (not saved) — press m to hide · click to place human labels"
+							: "Live preview hidden — press m to show · click to place human labels"}
 					</p>
 				)}
 			</div>

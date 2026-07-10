@@ -56,7 +56,7 @@ WEB_FULL_HELP_TEXT = (
     "Click the video to place the active bodypart.\n"
     "Use 'a' / 'd' or arrow keys for previous / next frame.\n"
     "Drag the frame slider to scrub previews.\n"
-    "Press 'm' to toggle machine label overlay.\n"
+    "Press 'm' to toggle machine / live prediction overlay.\n"
     "Press 'n' to toggle bodypart names on the video.\n"
     "Press 'h' to hide this help.\n"
     "Press Esc to close (prompts to save).\n"
