@@ -614,11 +614,15 @@ class SessionStore:
 		self._sync_dlc_iteration_from_handler()
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
-		# Reuse existing DLC human labels when present (single source of truth).
+		# Point session at labeled-data for saves. Labeler/train only use folders
+		# matching UI-selected videos (not every folder already in the project).
 		labeled_root = labeled_data_dir(project_dir)
-		if has_human_labels(labeled_root):
+		if labeled_root.is_dir():
 			self.session.human_labels_path = str(labeled_root)
-			bodyparts = bodyparts_from_labeled_data(labeled_root)
+			videos = list(self.session.videos or [])
+			bodyparts = bodyparts_from_labeled_data(
+				labeled_root, video_paths=videos or None
+			)
 			if bodyparts and not self.session.tracked_point_names:
 				self.session.tracked_point_names = bodyparts
 		# Loading a project must not keep another project's machine CSV in Loaded Assets.

@@ -145,9 +145,11 @@ class DeeplabcutHandler(BaseModel):
         # Path registry allows videos in different folders (cross-experiment corpus).
         from skellyclicker.services.video_path_registry import build_video_path_registry
         from skellyclicker.core.deeplabcut_handler.labeled_data_io import (
-            has_human_labels,
+            has_human_labels_for_videos,
             is_legacy_skellyclicker_csv,
             labeled_data_dir,
+            labeled_data_session_subset,
+            regenerate_all_collected_data_h5,
             resolve_human_labels_root,
         )
 
@@ -184,14 +186,22 @@ class DeeplabcutHandler(BaseModel):
             except ValueError:
                 labeled_root = labeled_data_dir(parent_directory)
 
-        if not has_human_labels(labeled_root):
+        # Only UI-selected videos — ignore other labeled-data folders in the project.
+        if not has_human_labels_for_videos(labeled_root, video_paths):
             raise ValueError(
-                f"No human labels in {labeled_root}. "
-                "Save labels from the labeler (or import) before training."
+                "No human labels for the videos in this session. "
+                "Open the labeler, label the selected videos, and save before training."
             )
 
+        report(0.08, "Refreshing labeled-data H5 for session videos…")
+        regenerate_all_collected_data_h5(labeled_root, video_paths=video_paths)
+
         report(0.15, f"Creating training dataset ({training_config.model_type})…")
-        deeplabcut.create_training_dataset(self.project_config_path, net_type=training_config.model_type)
+        # Hide non-session labeled-data folders so DLC does not train on them.
+        with labeled_data_session_subset(labeled_root, video_paths):
+            deeplabcut.create_training_dataset(
+                self.project_config_path, net_type=training_config.model_type
+            )
         # deeplabcut.create_training_model_comparison(self.project_config_path, net_types=["resnet_50", "rtmpose_x"])
 
 

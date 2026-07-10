@@ -153,6 +153,81 @@ def test_collected_df_to_wide_parses_img_index(tmp_path: Path):
 	assert wide.iloc[0]["a_x"] == pytest.approx(1.5)
 
 
+def test_regenerate_all_collected_data_h5_rewrites_siblings(tmp_path: Path):
+	"""Stale sibling H5 files are rebuilt from CSV before train."""
+	session_dir = tmp_path / "session_demo"
+	cam0 = _tiny_video(session_dir / "cam0.mp4")
+	cam1 = _tiny_video(session_dir / "cam1.mp4")
+	root = labeled_data_dir(tmp_path / "proj")
+	paths = [str(cam0), str(cam1)]
+
+	write_labeled_data_from_wide(
+		labeled_data_root=root,
+		wide_df=pd.DataFrame(
+			[
+				{"video": "cam0.mp4", "frame": 1, "nose_x": 1.0, "nose_y": 2.0},
+				{"video": "cam1.mp4", "frame": 2, "nose_x": 3.0, "nose_y": 4.0},
+			]
+		),
+		video_paths=paths,
+		joint_names=["nose"],
+	)
+
+	from skellyclicker.core.deeplabcut_handler.labeled_data_io import (
+		regenerate_all_collected_data_h5,
+		video_labeled_folder,
+	)
+
+	# Simulate a broken sibling H5 left from an older writer.
+	cam1_h5 = video_labeled_folder(root, cam1) / "CollectedData_human.h5"
+	cam1_h5.write_bytes(b"not a valid hdf5 file")
+
+	rewritten = regenerate_all_collected_data_h5(root)
+	assert len(rewritten) == 2
+	# Either a valid H5 exists, or tables is missing and H5 was removed.
+	if cam1_h5.is_file():
+		pd.read_hdf(str(cam1_h5), key="df_with_missing")
+	else:
+		assert (video_labeled_folder(root, cam1) / "CollectedData_human.csv").is_file()
+
+
+def test_labeled_data_session_subset_hides_other_folders(tmp_path: Path):
+	"""Non-session labeled-data folders are held aside during the train subset."""
+	from skellyclicker.core.deeplabcut_handler.labeled_data_io import (
+		labeled_data_session_subset,
+		video_labeled_folder,
+	)
+
+	session_dir = tmp_path / "session_demo"
+	cam0 = _tiny_video(session_dir / "cam0.mp4")
+	other = tmp_path / "other_exp" / "camX.mp4"
+	_tiny_video(other)
+	root = labeled_data_dir(tmp_path / "proj")
+
+	write_labeled_data_from_wide(
+		labeled_data_root=root,
+		wide_df=pd.DataFrame(
+			[
+				{"video": "cam0.mp4", "frame": 1, "nose_x": 1.0, "nose_y": 2.0},
+				{"video": "camX.mp4", "frame": 1, "nose_x": 3.0, "nose_y": 4.0},
+			]
+		),
+		video_paths=[str(cam0), str(other)],
+		joint_names=["nose"],
+	)
+	keep = video_labeled_folder(root, cam0)
+	other_folder = video_labeled_folder(root, other)
+	assert keep.is_dir() and other_folder.is_dir()
+
+	with labeled_data_session_subset(root, [str(cam0)]):
+		visible = {p.name for p in root.iterdir() if p.is_dir()}
+		assert keep.name in visible
+		assert other_folder.name not in visible
+
+	assert other_folder.is_dir()
+	assert keep.is_dir()
+
+
 def test_legacy_human_label_frames_still_works(tmp_path: Path):
 	csv = tmp_path / "labels.csv"
 	pd.DataFrame(
