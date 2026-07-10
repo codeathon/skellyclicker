@@ -565,11 +565,33 @@ button:disabled {
   width: 100%;
 }
 
+.labeling-nav--actions {
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .labeling-nav button {
   width: auto;
   margin-bottom: 0;
   padding: 0.35rem 0.65rem;
   font-size: 0.85rem;
+}
+
+.labeling-nav--actions .labeler-action-btn-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.labeling-nav--actions .labeler-action-btn {
+  width: auto;
+  min-width: 5rem;
+  margin-bottom: 0;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.95rem;
 }
 
 .labeling-close-actions {
@@ -579,6 +601,21 @@ button:disabled {
   gap: 0.35rem;
   flex-shrink: 0;
   width: 100%;
+}
+
+.labeling-close-actions--nav .labeler-action-btn-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.labeling-close-actions--nav button {
+  width: auto;
+  margin-bottom: 0;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.85rem;
 }
 
 .labeling-save-hint {

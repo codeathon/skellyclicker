@@ -116,6 +116,9 @@ export function LabelingCanvas({
 	const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const frameCountRef = useRef(0);
 	const gridSizeRef = useRef({ w: 0, h: 0 });
+	// CSS display size locked from the last committed frame so scrub previews
+	// upscale in place instead of shrinking the on-screen box.
+	const lockedDisplaySizeRef = useRef<{ w: number; h: number } | null>(null);
 	const [playing, setPlaying] = useState(false);
 
 	useEffect(() => {
@@ -140,9 +143,35 @@ export function LabelingCanvas({
 		if (maxW <= 0 || maxH <= 0) return;
 
 		const scale = Math.min(maxW / displayW, maxH / displayH);
-		canvas.style.width = `${Math.floor(displayW * scale)}px`;
-		canvas.style.height = `${Math.floor(displayH * scale)}px`;
+		const w = Math.floor(displayW * scale);
+		const h = Math.floor(displayH * scale);
+		// Explicit pixels — disable CSS max-* so scrub hints shrinking the stage
+		// cannot clamp the canvas smaller than the locked committed size.
+		canvas.style.maxWidth = "none";
+		canvas.style.maxHeight = "none";
+		canvas.style.width = `${w}px`;
+		canvas.style.height = `${h}px`;
+		if (!scrubbingRef.current && !playingRef.current) {
+			lockedDisplaySizeRef.current = { w, h };
+		}
 	}, []);
+
+	const applyCanvasDisplaySize = useCallback(
+		(preview: boolean) => {
+			const canvas = canvasRef.current;
+			if (!canvas) return;
+			if (preview && lockedDisplaySizeRef.current) {
+				const { w, h } = lockedDisplaySizeRef.current;
+				canvas.style.maxWidth = "none";
+				canvas.style.maxHeight = "none";
+				canvas.style.width = `${w}px`;
+				canvas.style.height = `${h}px`;
+				return;
+			}
+			fitCanvasToStage();
+		},
+		[fitCanvasToStage],
+	);
 
 	useEffect(() => {
 		if (state?.grid_width && state?.grid_height) {
@@ -152,7 +181,7 @@ export function LabelingCanvas({
 	}, [state?.grid_width, state?.grid_height, fitCanvasToStage]);
 
 	const paintFrameBlob = useCallback(
-		async (blob: Blob, gen: number) => {
+		async (blob: Blob, gen: number, preview: boolean) => {
 			if (gen !== previewGenRef.current) return;
 			try {
 				const bitmap = await createImageBitmap(blob);
@@ -168,10 +197,13 @@ export function LabelingCanvas({
 				const gridW = gridSizeRef.current.w;
 				const gridH = gridSizeRef.current.h;
 				const ctx = canvas.getContext("2d");
-				// Keep canvas internal size at native grid so scrub preview does not resize the view.
+				// Always paint into the native grid buffer so scrub JPEGs upscale
+				// to the same canvas resolution as a frozen frame.
 				if (gridW > 0 && gridH > 0 && ctx) {
 					canvas.width = gridW;
 					canvas.height = gridH;
+					ctx.imageSmoothingEnabled = true;
+					ctx.imageSmoothingQuality = "high";
 					ctx.drawImage(bitmap, 0, 0, gridW, gridH);
 				} else if (ctx) {
 					canvas.width = bitmap.width;
@@ -179,14 +211,14 @@ export function LabelingCanvas({
 					ctx.drawImage(bitmap, 0, 0);
 				}
 				bitmap.close();
-				fitCanvasToStage();
+				applyCanvasDisplaySize(preview);
 				setError(null);
 			} catch (err) {
 				if (gen !== previewGenRef.current) return;
 				setError(err instanceof Error ? err.message : String(err));
 			}
 		},
-		[fitCanvasToStage],
+		[applyCanvasDisplaySize],
 	);
 
 	const fetchAndPaintFrame = useCallback(
@@ -196,7 +228,7 @@ export function LabelingCanvas({
 			if (!(await isJpegBlob(blob))) {
 				throw new Error(`Failed to load frame ${frameNumber}`);
 			}
-			await paintFrameBlob(blob, gen);
+			await paintFrameBlob(blob, gen, preview);
 		},
 		[paintFrameBlob],
 	);
@@ -615,6 +647,15 @@ export function LabelingCanvas({
 
 	const onScrubStart = () => {
 		stopPlaying(false);
+		// Freeze on-screen canvas size before preview JPEGs arrive.
+		const canvas = canvasRef.current;
+		if (canvas) {
+			const w = canvas.clientWidth;
+			const h = canvas.clientHeight;
+			if (w > 0 && h > 0) {
+				lockedDisplaySizeRef.current = { w, h };
+			}
+		}
 		scrubbingRef.current = true;
 		setScrubbing(true);
 		setError(null);
@@ -692,7 +733,7 @@ export function LabelingCanvas({
 										disabled={isClosing}
 										onClick={() => jumpToLabeledFrame(item.frame)}
 									>
-										Frame {item.frame + 1}
+										Frame {item.frame}
 									</button>
 								</li>
 							))}
@@ -702,33 +743,33 @@ export function LabelingCanvas({
 					)}
 				</aside>
 				<div className="labeling-center">
-					<div className="labeling-nav">
-						<button
-							type="button"
-							disabled={state.frame_number <= 0 || isClosing}
-							onClick={() => {
-								stopPlaying(false);
-								loadFrame(state.frame_number - 1).catch((e) => {
-									if (isIgnorableFetchError(e)) return;
-									setError(String(e));
-								});
-							}}
-						>
-							← Prev
-						</button>
-						<button
-							type="button"
-							disabled={state.frame_number >= state.frame_count - 1 || isClosing}
-							onClick={() => {
-								stopPlaying(false);
-								loadFrame(state.frame_number + 1).catch((e) => {
-									if (isIgnorableFetchError(e)) return;
-									setError(String(e));
-								});
-							}}
-						>
-							Next →
-						</button>
+					<div className="labeling-nav labeling-nav--actions">
+						<p className="hint labeling-save-hint">
+							Save writes <strong>human labels</strong> only. Machine labels are
+							read-only overlay (press m).
+						</p>
+						<div className="labeler-action-btn-row">
+							<button
+								type="button"
+								className="labeler-action-btn"
+								disabled={isClosing || isSaving}
+								onClick={() => void saveLabels()}
+							>
+								{isSaving ? "Saving…" : "Save"}
+							</button>
+							<button
+								type="button"
+								className="labeler-action-btn"
+								disabled={isClosing}
+								onClick={() => {
+									if (window.confirm("Close without saving labels?")) {
+										void closeLabeler(false);
+									}
+								}}
+							>
+								Close
+							</button>
+						</div>
 					</div>
 					<div className="labeling-stage" ref={stageRef}>
 						<canvas
@@ -738,32 +779,34 @@ export function LabelingCanvas({
 							onClick={onClick}
 						/>
 					</div>
-					<div className="labeling-close-actions">
-						<p className="hint labeling-save-hint">
-							Save writes <strong>human labels</strong> only. Machine labels are
-							read-only overlay (press m).
-						</p>
+					<div className="labeling-close-actions labeling-close-actions--nav">
 						<div className="labeler-action-btn-row">
-						<button
-							type="button"
-							className="labeler-action-btn"
-							disabled={isClosing || isSaving}
-							onClick={() => void saveLabels()}
-						>
-							{isSaving ? "Saving…" : "Save"}
-						</button>
-						<button
-							type="button"
-							className="labeler-action-btn"
-							disabled={isClosing}
-							onClick={() => {
-								if (window.confirm("Close without saving labels?")) {
-									void closeLabeler(false);
-								}
-							}}
-						>
-							Close
-						</button>
+							<button
+								type="button"
+								disabled={state.frame_number <= 0 || isClosing}
+								onClick={() => {
+									stopPlaying(false);
+									loadFrame(state.frame_number - 1).catch((e) => {
+										if (isIgnorableFetchError(e)) return;
+										setError(String(e));
+									});
+								}}
+							>
+								← Prev
+							</button>
+							<button
+								type="button"
+								disabled={state.frame_number >= state.frame_count - 1 || isClosing}
+								onClick={() => {
+									stopPlaying(false);
+									loadFrame(state.frame_number + 1).catch((e) => {
+										if (isIgnorableFetchError(e)) return;
+										setError(String(e));
+									});
+								}}
+							>
+								Next →
+							</button>
 						</div>
 					</div>
 				</div>
@@ -817,7 +860,7 @@ export function LabelingCanvas({
 					<div className="labeling-hud-section">
 						<h3 className="labeling-hud-title">Frame</h3>
 						<p className="labeling-hud-line">
-							{state.frame_number + 1} / {state.frame_count}
+							{state.frame_number} / {state.frame_count}
 						</p>
 						<p className="labeling-hud-line">
 							Active: <strong>{state.active_point}</strong>
@@ -912,7 +955,7 @@ export function LabelingCanvas({
 						onPointerCancel={(e) => onSliderCommit(Number(e.currentTarget.value))}
 					/>
 					<span className="frame-scrubber-time">
-						{sliderFrame + 1} / {state.frame_count}
+						{sliderFrame} / {state.frame_count}
 					</span>
 				</div>
 				{playing && (
