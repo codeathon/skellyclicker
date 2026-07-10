@@ -34,6 +34,21 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="SkellyClicker", version="0.2.0", lifespan=_lifespan)
 
+# Bump when shipping labeler/session fixes so /api/health proves the process restarted.
+CODE_STAMP = "2026-07-09-multi-corpus-v3"
+
+
+@app.get("/api/health")
+def health() -> dict:
+	"""Lightweight check that the running process has the expected code."""
+	return {
+		"ok": True,
+		"code_stamp": CODE_STAMP,
+		"machine_labels_path": store.session.machine_labels_path,
+		"video_count": len(store.session.videos or []),
+		"labeling_mode": store.session.labeling_mode.value,
+	}
+
 
 @app.exception_handler(SessionError)
 async def session_error_handler(_request, exc: SessionError):

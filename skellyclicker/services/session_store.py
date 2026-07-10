@@ -584,6 +584,9 @@ class SessionStore:
 		data = json.loads(target.read_text())
 		self.session = AppSession.model_validate(data)
 		self.session.session_saved_path = str(target.resolve())
+		# Do not restore machine CSV into Loaded Assets from an old session file —
+		# Full Analysis / Import Machine Labels set this path when a file is produced.
+		self.session.machine_labels_path = None
 		# Re-detect mode from current video files (stale session JSON is OK).
 		if self.session.videos:
 			try:

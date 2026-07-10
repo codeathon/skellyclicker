@@ -252,6 +252,21 @@ def test_finalize_does_not_invent_machine_labels_when_unset(fresh_store, tmp_pat
 	assert session.machine_labels_path is None
 
 
+def test_load_session_json_clears_machine_labels(fresh_store, tmp_path):
+	"""Loading a session file must not re-surface a stale machine CSV in assets."""
+	session_file = tmp_path / "session.json"
+	machine = tmp_path / "skellyclicker_machine_labels_iteration_0.csv"
+	machine.write_text("video,frame,nose_x,nose_y\n")
+	fresh_store.session.machine_labels_path = str(machine)
+	fresh_store.session.videos = None
+	session_file.write_text(
+		fresh_store.session.model_dump_json(indent=2, exclude={"asset_path_checks"})
+	)
+	fresh_store.session.machine_labels_path = None
+	session = fresh_store.load_session_json(str(session_file))
+	assert session.machine_labels_path is None
+
+
 def test_add_videos_clears_machine_labels_from_assets(fresh_store, tmp_path):
 	"""Adding videos must clear Loaded Assets machine path (not auto-discover)."""
 	v1 = tmp_path / "a.mp4"
