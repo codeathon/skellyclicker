@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { AppSession, client, LabelingState, NavFrameItem } from "../api/client";
-import { pathDialog } from "../api/pathDialog";
-import { humanLabelsCsvDefaultName, humanLabelsSaveDefaultPath, labelsFileBasename } from "../api/labelsCsvName";
+import { humanLabelsDisplayName, labelsFileBasename } from "../api/labelsCsvName";
 
 interface Props {
 	humanLabelsPath: string | null;
@@ -413,19 +412,8 @@ export function LabelingCanvas({
 			setError(null);
 			stopPlaying(false);
 			try {
-				let savePath: string | undefined;
-				if (save) {
-					const existing = labelsPathRef.current ?? humanLabelsPath;
-					if (existing) {
-						savePath = existing;
-					} else {
-						const picked = await pathDialog.saveCsvForLabeler(
-							humanLabelsSaveDefaultPath(existing, videoPaths),
-						);
-						savePath = picked ?? undefined;
-					}
-				}
-				const session = await client.closeLabeler(save, savePath);
+				// Human labels always go to the DLC project labeled-data folder.
+				const session = await client.closeLabeler(save);
 				onClose(session);
 			} catch (e) {
 				closingRef.current = false;
@@ -433,7 +421,7 @@ export function LabelingCanvas({
 				setError(e instanceof Error ? e.message : String(e));
 			}
 		},
-		[humanLabelsPath, videoPaths, onClose, stopPlaying],
+		[onClose, stopPlaying],
 	);
 
 	const saveLabels = useCallback(async () => {
@@ -443,17 +431,7 @@ export function LabelingCanvas({
 		setSaveNotice(null);
 		stopPlaying(false);
 		try {
-			let savePath: string | undefined;
-			if (labelsPathRef.current) {
-				savePath = labelsPathRef.current;
-			} else {
-				const picked = await pathDialog.saveCsvForLabeler(
-					humanLabelsSaveDefaultPath(labelsPathRef.current, videoPaths),
-				);
-				if (!picked) return;
-				savePath = picked;
-			}
-			const session = await client.saveLabeler(savePath);
+			const session = await client.saveLabeler();
 			labelsPathRef.current = session.human_labels_path;
 			onSessionUpdate(session);
 			setSaveNotice(session.status_message ?? "Labels saved.");
@@ -462,7 +440,7 @@ export function LabelingCanvas({
 		} finally {
 			setIsSaving(false);
 		}
-	}, [videoPaths, onSessionUpdate, stopPlaying, isSaving]);
+	}, [onSessionUpdate, stopPlaying, isSaving]);
 
 	const undoLastLabel = useCallback(async () => {
 		if (!state || closingRef.current) return;
@@ -671,9 +649,10 @@ export function LabelingCanvas({
 	const activeCursor = crosshairCursorCss(
 		pointColorCss(state.point_colors, state.active_point),
 	);
-	const humanLabelsName =
-		labelsFileBasename(labelsPathRef.current ?? humanLabelsPath) ??
-		humanLabelsCsvDefaultName(videoPaths);
+	const humanLabelsName = humanLabelsDisplayName(
+		labelsPathRef.current ?? humanLabelsPath,
+		videoPaths,
+	);
 	const machineLabelsName = labelsFileBasename(machineLabelsPath);
 	const navFrames = resolveNavFrames(state);
 	const showVideoSelector =

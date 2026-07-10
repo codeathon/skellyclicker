@@ -18,12 +18,12 @@ def test_collect_asset_path_checks_mixed_existence(tmp_path):
 	video_ok = tmp_path / "cam.mp4"
 	video_ok.write_bytes(b"v")
 	video_missing = str(tmp_path / "gone.mp4")
-	csv_ok = tmp_path / "labels.csv"
-	csv_ok.write_text("bodyparts,x,y\n")
+	labeled = tmp_path / "proj" / "labeled-data"
+	labeled.mkdir(parents=True)
 
 	session = AppSession(
 		videos=[str(video_ok), video_missing],
-		human_labels_path=str(csv_ok),
+		human_labels_path=str(labeled),
 		machine_labels_path=str(tmp_path / "missing.csv"),
 		dlc_project_path=str(tmp_path / "no_project"),
 	)
@@ -31,7 +31,7 @@ def test_collect_asset_path_checks_mixed_existence(tmp_path):
 
 	assert checks[str(video_ok)] is True
 	assert checks[video_missing] is False
-	assert checks[str(csv_ok)] is True
+	assert checks[str(labeled)] is True
 	assert checks[str(tmp_path / "missing.csv")] is False
 	assert checks[str(tmp_path / "no_project")] is False
 

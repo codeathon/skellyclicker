@@ -69,7 +69,10 @@ def partial_analyze_human_labels(
 		if progress_callback:
 			progress_callback(fraction, message)
 
-	frames_per_video = human_label_frames_per_video(human_labels_csv)
+	frames_per_video = human_label_frames_per_video(
+		human_labels_csv,
+		video_paths=video_paths,
+	)
 	if not frames_per_video:
 		raise ValueError("No labeled frames in human labels CSV")
 
