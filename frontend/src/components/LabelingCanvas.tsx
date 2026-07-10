@@ -194,21 +194,23 @@ export function LabelingCanvas({
 					bitmap.close();
 					return;
 				}
-				const gridW = gridSizeRef.current.w;
-				const gridH = gridSizeRef.current.h;
+				// Prefer session native grid; fall back to bitmap (scrub and commit
+				// now share the same server-side grid size).
+				let gridW = gridSizeRef.current.w;
+				let gridH = gridSizeRef.current.h;
+				if (gridW <= 0 || gridH <= 0) {
+					gridW = bitmap.width;
+					gridH = bitmap.height;
+					gridSizeRef.current = { w: gridW, h: gridH };
+				}
 				const ctx = canvas.getContext("2d");
-				// Always paint into the native grid buffer so scrub JPEGs upscale
-				// to the same canvas resolution as a frozen frame.
-				if (gridW > 0 && gridH > 0 && ctx) {
+				if (ctx) {
+					// Setting width/height resets the canvas; re-apply CSS size after.
 					canvas.width = gridW;
 					canvas.height = gridH;
 					ctx.imageSmoothingEnabled = true;
 					ctx.imageSmoothingQuality = "high";
 					ctx.drawImage(bitmap, 0, 0, gridW, gridH);
-				} else if (ctx) {
-					canvas.width = bitmap.width;
-					canvas.height = bitmap.height;
-					ctx.drawImage(bitmap, 0, 0);
 				}
 				bitmap.close();
 				applyCanvasDisplaySize(preview);
