@@ -128,7 +128,11 @@ class VideoHandler(BaseModel):
         tracked_point_names: list[str] | None = None,
         machine_labels_path: str | None = None,
     ):
-        """Web labeler: native-resolution grid for clicks; capped grid for scrub preview."""
+        """Web labeler: native-resolution grid for clicks and scrub display.
+
+        A capped preview_grid is still computed for compatibility, but scrub
+        frames render on the native grid so display size matches committed frames.
+        """
         from skellyclicker import PREVIEW_MAX_WINDOW_SIZE
 
         video_paths = sorted(video_paths)
@@ -502,15 +506,15 @@ class VideoHandler(BaseModel):
         *,
         preview: bool = False,
     ) -> np.ndarray:
-        """Create a grid of video images."""
-        use_preview = (
-            preview
-            and self.preview_grid_parameters is not None
-            and self.preview_scaling_params is not None
-        )
-        grid = (
-            self.preview_grid_parameters if use_preview else self.grid_parameters
-        )
+        """Create a grid of video images.
+
+        Scrub ``preview`` only skips heavy annotations (caller) and uses lower
+        JPEG quality — the composite always uses the native grid so the on-screen
+        display size matches a committed/frozen frame.
+        """
+        # Always native grid: a separate preview grid (e.g. 1920x1080 cells) made
+        # scrub frames look smaller/letterboxed even after frontend upscaling.
+        grid = self.grid_parameters
         video_states = [deepcopy(video.zoom_state) for video in self.videos.values()]
 
         grid_image = np.zeros(
@@ -521,11 +525,7 @@ class VideoHandler(BaseModel):
         for video_index, (video, zoom_state) in enumerate(
             zip(self.videos.values(), video_states)
         ):
-            scaling = (
-                self.preview_scaling_params[video_index]
-                if use_preview
-                else video.scaling_params
-            )
+            scaling = video.scaling_params
             row = video_index // grid.columns
             col = video_index % grid.columns
 
@@ -596,7 +596,8 @@ class VideoHandler(BaseModel):
                 except ValueError as e:
                     logger.error(f"Error placing image in grid: {e}")
 
-        if use_preview:
+        if preview:
+            # Skip grid HUD text while scrubbing — same pixel size, lighter encode.
             return grid_image
 
         return self.image_annotator.annotate_image_grid(
