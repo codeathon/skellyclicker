@@ -131,11 +131,44 @@ class SessionStore:
 		if self.live_inference is None:
 			self.live_inference = LiveInferenceService()
 		try:
+			# Fingerprint reload picks up new iteration/snapshots after train.
 			self.live_inference.load(str(config_path))
 		except Exception as exc:
 			# Labeler still works without live scrub; clear so overlays stay off.
 			self._close_live_inference()
 			self.session.status_message = f"Live machine labels unavailable: {exc}"
+
+	def _reload_live_inference_after_train(self) -> None:
+		"""Force-reload warm runners + clear caches after Train Network finishes."""
+		if not self.dlc_handler:
+			self._close_live_inference()
+			return
+		config_path = getattr(self.dlc_handler, "project_config_path", None)
+		if not config_path:
+			self._close_live_inference()
+			return
+		from skellyclicker.services.dlc_paths import (
+			dlc_project_dir,
+			latest_iteration_with_pytorch_model,
+		)
+		from skellyclicker.services.live_inference import LiveInferenceService
+
+		project_dir = dlc_project_dir(str(config_path))
+		if latest_iteration_with_pytorch_model(project_dir) is None:
+			self._close_live_inference()
+			return
+		if self.live_inference is None:
+			self.live_inference = LiveInferenceService()
+		try:
+			self.live_inference.load(str(config_path), force=True)
+		except Exception as exc:
+			self._close_live_inference()
+			self.session.status_message = (
+				f"Training done, but live overlays failed to reload: {exc}"
+			)
+			return
+		if self.labeling_engine is not None and self.live_inference.ready:
+			self.labeling_engine.attach_live_inference(self.live_inference)
 
 
 	def start_new_session(self) -> AppSession:
