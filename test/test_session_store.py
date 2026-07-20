@@ -342,10 +342,38 @@ def test_load_dlc_project_clears_prior_machine_labels(fresh_store, tmp_path, mon
 		fake_mod,
 	)
 	fresh_store.session.machine_labels_path = "/tmp/old_machine.csv"
+	fresh_store.session.human_labels_path = "/tmp/old_project/labeled-data"
 	# Also stub live-inference so load does not need a real model tree.
 	monkeypatch.setattr(fresh_store, "_ensure_live_inference", lambda: None)
 	fresh_store.load_dlc_project(str(project))
 	assert fresh_store.session.machine_labels_path is None
+	assert fresh_store.session.human_labels_path == str(
+		(project / "labeled-data").resolve()
+	)
+	assert (project / "labeled-data").is_dir()
+
+
+def test_bind_human_labels_creates_labeled_data(fresh_store, tmp_path):
+	"""Create/load binding always points human saves at project labeled-data."""
+	project = tmp_path / "brand_new"
+	project.mkdir()
+	fresh_store.session.human_labels_path = "/tmp/stale/labeled-data"
+	root = fresh_store._bind_human_labels_to_dlc_project(project)
+	assert root == (project / "labeled-data").resolve()
+	assert root.is_dir()
+	assert fresh_store.session.human_labels_path == str(root)
+
+
+def test_labeled_data_save_path_prefers_active_dlc_project(fresh_store, tmp_path):
+	"""Saves follow the loaded DLC project, not a leftover human path."""
+	project = tmp_path / "active"
+	(project / "config.yaml").parent.mkdir(parents=True, exist_ok=True)
+	(project / "config.yaml").write_text("Task: t\niteration: 0\n")
+	fresh_store.session.dlc_project_path = str(project)
+	fresh_store.session.human_labels_path = str(tmp_path / "other" / "labeled-data")
+	path = fresh_store._labeled_data_save_path()
+	assert path == str((project / "labeled-data").resolve())
+	assert fresh_store.session.human_labels_path == path
 
 
 def test_ensure_live_inference_skips_without_trained_weights(fresh_store, tmp_path):

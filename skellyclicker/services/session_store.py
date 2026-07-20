@@ -321,22 +321,43 @@ class SessionStore:
 				)
 		return self._finalize_session()
 
+	def _bind_human_labels_to_dlc_project(self, project_dir: str | Path) -> Path:
+		"""Tie human-label saves to this DLC project's labeled-data folder.
+
+		Creates labeled-data if missing so a brand-new project is immediately
+		usable as the label destination. Bodyparts are filled from existing
+		CollectedData when the session has none yet.
+		"""
+		root = labeled_data_dir(project_dir)
+		root.mkdir(parents=True, exist_ok=True)
+		self.session.human_labels_path = str(root)
+		videos = list(self.session.videos or [])
+		bodyparts = bodyparts_from_labeled_data(
+			root, video_paths=videos or None
+		)
+		if bodyparts and not self.session.tracked_point_names:
+			self.session.tracked_point_names = bodyparts
+		return root
+
 	def _labeled_data_save_path(self) -> str:
-		"""Resolve the DLC labeled-data directory for human-label saves."""
+		"""Resolve the DLC labeled-data directory for human-label saves.
+
+		Active DLC project wins over a stale human_labels_path from a prior project.
+		"""
+		if self.session.dlc_project_path:
+			try:
+				project_dir, _ = resolve_dlc_project_input(self.session.dlc_project_path)
+			except ValueError as exc:
+				raise SessionError(str(exc)) from exc
+			return str(self._bind_human_labels_to_dlc_project(project_dir))
 		if self.session.human_labels_path:
 			try:
 				return str(resolve_human_labels_root(self.session.human_labels_path))
 			except ValueError:
 				pass
-		if not self.session.dlc_project_path:
-			raise SessionError(
-				"Create or load a DLC project before saving human labels"
-			)
-		try:
-			project_dir, _ = resolve_dlc_project_input(self.session.dlc_project_path)
-		except ValueError as exc:
-			raise SessionError(str(exc)) from exc
-		return str(labeled_data_dir(project_dir))
+		raise SessionError(
+			"Create or load a DLC project before saving human labels"
+		)
 
 	def set_machine_labels_path(self, path: str) -> AppSession:
 		self._assert_no_active_job()
@@ -647,17 +668,9 @@ class SessionStore:
 		self._sync_dlc_iteration_from_handler()
 		if self.dlc_handler.tracked_point_names:
 			self.session.tracked_point_names = self.dlc_handler.tracked_point_names
-		# Point session at labeled-data for saves. Labeler/train only use folders
-		# matching UI-selected videos (not every folder already in the project).
-		labeled_root = labeled_data_dir(project_dir)
-		if labeled_root.is_dir():
-			self.session.human_labels_path = str(labeled_root)
-			videos = list(self.session.videos or [])
-			bodyparts = bodyparts_from_labeled_data(
-				labeled_root, video_paths=videos or None
-			)
-			if bodyparts and not self.session.tracked_point_names:
-				self.session.tracked_point_names = bodyparts
+		# Always retarget human labels to this project's labeled-data (even if empty).
+		# Labeler/train only use folders matching UI-selected videos.
+		self._bind_human_labels_to_dlc_project(project_dir)
 		# Loading a project must not keep another project's machine CSV in Loaded Assets.
 		# Full Analysis / Import Machine Labels set this path when needed.
 		self.session.machine_labels_path = None
@@ -731,6 +744,8 @@ class SessionStore:
 					project_config_path=str(config_path.resolve())
 				)
 				self._sync_dlc_iteration_from_handler()
+				# Re-bind labels to the restored project's folder (not a stale path).
+				self._bind_human_labels_to_dlc_project(config_path.parent)
 				self._ensure_live_inference()
 		session = self._finalize_session()
 		missing = [c.path for c in session.asset_path_checks if not c.exists]
