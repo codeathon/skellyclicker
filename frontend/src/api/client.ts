@@ -76,6 +76,7 @@ export interface LabelingState {
   has_machine_labels: boolean;
   live_inference_ready?: boolean;
   auto_next_point: boolean;
+  contrast?: number;
   grid_width: number;
   grid_height: number;
   labeling_mode?: LabelingMode;
@@ -231,6 +232,11 @@ export const client = {
     api<LabelingState>("/api/labeling/active-point", {
       method: "POST",
       body: JSON.stringify({ point_name }),
+    }),
+  setContrast: (contrast: number) =>
+    api<LabelingState>("/api/labeling/contrast", {
+      method: "POST",
+      body: JSON.stringify({ contrast }),
     }),
   setActiveLabelingVideo: (path: string) =>
     api<AppSession>("/api/labeling/active-video", {

@@ -22,6 +22,11 @@ from skellyclicker.services.label_nav_frames import build_nav_frame_list
 from skellyclicker.services.models import LabelingMode
 from skellyclicker.services.live_inference import LiveInferenceService
 
+# Display-only OpenCV alpha for convertScaleAbs (does not affect saved labels).
+CONTRAST_MIN = 0.25
+CONTRAST_MAX = 3.0
+CONTRAST_DEFAULT = 1.0
+
 
 class LabelingEngine(BaseModel):
 	"""Server-side labeler for one open labeling session."""
@@ -208,6 +213,20 @@ class LabelingEngine(BaseModel):
 
 	def set_active_point(self, point_name: str) -> None:
 		self.video_handler.data_handler.set_active_point_by_name(point_name)
+
+	def set_contrast(self, contrast: float) -> float:
+		"""Apply display contrast to all open videos (clamped). Returns the value used."""
+		value = max(CONTRAST_MIN, min(CONTRAST_MAX, float(contrast)))
+		for video in self.video_handler.videos.values():
+			video.contrast = value
+		return value
+
+	@property
+	def contrast(self) -> float:
+		videos = list(self.video_handler.videos.values())
+		if not videos:
+			return CONTRAST_DEFAULT
+		return float(videos[0].contrast)
 
 	def _sync_annotator_overlay_flags(self) -> None:
 		"""Apply web labeler overlay toggles to human and machine annotators."""
@@ -471,6 +490,7 @@ class LabelingEngine(BaseModel):
 				self._live_inference is not None and self._live_inference.ready
 			),
 			"auto_next_point": self.auto_next_point,
+			"contrast": self.contrast,
 			"grid_width": handler.grid_parameters.total_width,
 			"grid_height": handler.grid_parameters.total_height,
 			"labeling_mode": self.labeling_mode.value,
