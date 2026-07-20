@@ -129,6 +129,8 @@ def test_set_frame_updates_auto_next_for_review_frames():
 
 	human_dh = MagicMock()
 	human_dh.config.video_names = ["cam.mp4"]
+	# Leaving a frame is allowed when labeling is complete / empty.
+	human_dh.incomplete_labeling_message.return_value = None
 	human_dh.get_data_by_video_frame.side_effect = [
 		{},
 		{"nose": MagicMock()},

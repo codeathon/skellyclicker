@@ -555,6 +555,12 @@ class SessionStore:
 				raise SessionError(f"Video not in session: {video_path}")
 		if resolved == self.session.active_video_path:
 			return self.session
+		# Same rule as frame next: finish the current frame before switching videos.
+		block = self.labeling_engine.video_handler.data_handler.incomplete_labeling_message(
+			self.labeling_engine.frame_number
+		)
+		if block:
+			raise SessionError(block)
 		# Persist current video's labels into labeled-data before switching.
 		if self.session.human_labels_path or self.session.dlc_project_path:
 			self.save_labeler(None)

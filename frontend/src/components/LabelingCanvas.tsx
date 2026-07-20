@@ -25,6 +25,7 @@ function isIgnorableFetchError(err: unknown): boolean {
 /** Matches skellyclicker.core.video_handler.image_annotator.WEB_FULL_HELP_TEXT */
 const WEB_FULL_HELP_TEXT = `Click the video to place the active bodypart.
 Use 'a' / 'd' or arrow keys for previous / next frame.
+Finish all bodyparts on a frame before leaving it (empty frames may be skipped).
 Drag the frame slider to scrub previews.
 Press 'm' to toggle machine / live prediction overlay.
 Press 'n' to toggle bodypart names on the video.
@@ -264,14 +265,31 @@ export function LabelingCanvas({
 			clearLiveOverlayRetries();
 			const gen = ++previewGenRef.current;
 			pendingPreviewFrameRef.current = null;
-			const s = await client.setFrame(frameNumber);
-			if (gen !== previewGenRef.current) return;
-			frameRef.current = s.frame_number;
-			setSliderFrame(s.frame_number);
-			setState(s);
-			await fetchAndPaintFrame(s.frame_number, false, gen);
-			if (gen === previewGenRef.current) {
-				scheduleLiveOverlayRetries(s.frame_number, gen);
+			const committed = frameRef.current;
+			try {
+				const s = await client.setFrame(frameNumber);
+				if (gen !== previewGenRef.current) return;
+				frameRef.current = s.frame_number;
+				setSliderFrame(s.frame_number);
+				setState(s);
+				setError(null);
+				await fetchAndPaintFrame(s.frame_number, false, gen);
+				if (gen === previewGenRef.current) {
+					scheduleLiveOverlayRetries(s.frame_number, gen);
+				}
+			} catch (err) {
+				// Incomplete-frame gate (or other setFrame errors): stay put and notify.
+				if (gen !== previewGenRef.current) return;
+				frameRef.current = committed;
+				setSliderFrame(committed);
+				await fetchAndPaintFrame(committed, false, gen).catch(() => {
+					/* keep prior canvas if repaint fails */
+				});
+				if (!isIgnorableFetchError(err)) {
+					// Set after repaint — paintFrameBlob clears error on success.
+					setError(err instanceof Error ? err.message : String(err));
+				}
+				throw err;
 			}
 		},
 		[fetchAndPaintFrame, clearLiveOverlayRetries, scheduleLiveOverlayRetries],

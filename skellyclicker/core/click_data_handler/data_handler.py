@@ -306,6 +306,46 @@ class DataHandler(BaseModel):
         y = row[f"{point_name}_y"]
         return bool(pd.notna(x) and pd.notna(y))
 
+    def frame_has_any_label(self, frame_number: int) -> bool:
+        """True when any bodypart is placed on this frame (any open video)."""
+        for video_index in range(len(self.config.video_names)):
+            for point_name in self.config.tracked_point_names:
+                if self.point_is_labeled(video_index, frame_number, point_name):
+                    return True
+        return False
+
+    def missing_bodyparts_on_frame(self, frame_number: int) -> list[str]:
+        """Unlabeled bodyparts on this frame; prefix with video name when multi-cam."""
+        missing: list[str] = []
+        multi = len(self.config.video_names) > 1
+        for video_index, video_name in enumerate(self.config.video_names):
+            for point_name in self.config.tracked_point_names:
+                if self.point_is_labeled(video_index, frame_number, point_name):
+                    continue
+                missing.append(
+                    f"{video_name}:{point_name}" if multi else point_name
+                )
+        return missing
+
+    def incomplete_labeling_message(self, frame_number: int) -> str | None:
+        """If labeling was started but not finished on this frame, return a user message.
+
+        Empty frames may be skipped. Once any human label is placed, all bodyparts
+        (on all open videos) must be filled before leaving.
+        """
+        if not self.frame_has_any_label(frame_number):
+            return None
+        missing = self.missing_bodyparts_on_frame(frame_number)
+        if not missing:
+            return None
+        shown = ", ".join(missing[:8])
+        if len(missing) > 8:
+            shown = f"{shown}, … (+{len(missing) - 8} more)"
+        return (
+            "Finish labeling this frame before leaving. "
+            f"Still missing: {shown}"
+        )
+
     def reset_active_point_for_frame(self, frame_number: int, video_index: int = 0) -> None:
         """Select first unlabeled bodypart on this frame, or the first bodypart when fresh."""
         for name in self.config.tracked_point_names:
