@@ -75,6 +75,8 @@ class DLCJobRunner:
 					progress_callback=on_train_progress,
 				)
 				session.dlc_iteration = handler.iteration
+				# Drop stale live runners/caches so scrub uses the new weights.
+				store._reload_live_inference_after_train()
 				job.status = JobStatus.completed
 				self._set_progress(
 					job,

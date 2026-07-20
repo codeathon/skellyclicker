@@ -54,6 +54,8 @@ class LiveInferenceService:
 		self._detector_runner: Any | None = None
 		self._bodyparts: list[str] = []
 		self._config_path: str | None = None
+		# Fingerprint of loaded weights — reload when iteration/snapshot changes.
+		self._weights_fingerprint: str | None = None
 		self._ready = False
 		self._load_error: str | None = None
 		# Reused capture — opening per frame dominated scrub latency.
@@ -79,6 +81,10 @@ class LiveInferenceService:
 	def bodyparts(self) -> list[str]:
 		return list(self._bodyparts)
 
+	@property
+	def weights_fingerprint(self) -> str | None:
+		return self._weights_fingerprint
+
 	def set_result_callback(
 		self,
 		callback: Callable[[str, int, dict[str, tuple[float, float]]], None] | None,
@@ -86,11 +92,68 @@ class LiveInferenceService:
 		"""Called on the worker thread after a successful background infer."""
 		self._on_result = callback
 
-	def load(self, project_config_path: str, *, batch_size: int = 1) -> None:
-		"""Build warm pose (+ detector) runners from a DLC project config.yaml."""
+	@staticmethod
+	def _fingerprint_for_config(project_config_path: str) -> str:
+		"""Identify which trained snapshot would be loaded for this config."""
+		from deeplabcut.core.engine import Engine
+		import deeplabcut.pose_estimation_pytorch.apis.utils as utils
+		from deeplabcut.utils import auxiliaryfunctions
+
+		from skellyclicker.services.dlc_paths import resolve_analyze_iteration
+
+		config_path = Path(project_config_path).expanduser().resolve()
+		project_path = config_path.parent
+		cfg = auxiliaryfunctions.read_config(str(config_path))
+		analyze_iteration = resolve_analyze_iteration(project_path, cfg)
+		cfg = dict(cfg)
+		cfg["iteration"] = analyze_iteration
+		train_fraction = cfg["TrainingFraction"][0]
+		model_folder = project_path / auxiliaryfunctions.get_model_folder(
+			train_fraction, 1, cfg, engine=Engine.PYTORCH
+		)
+		train_folder = model_folder / "train"
+		model_cfg_path = train_folder / Engine.PYTORCH.pose_cfg_name
+		if not model_cfg_path.is_file():
+			return f"{config_path}|iter={analyze_iteration}|missing-cfg"
+		model_cfg = auxiliaryfunctions.read_plainconfig(model_cfg_path)
+		from deeplabcut.pose_estimation_pytorch.task import Task
+
+		pose_task = Task(model_cfg["method"])
+		snapshot_index, _ = utils.parse_snapshot_index_for_analysis(
+			cfg, model_cfg, None, None
+		)
+		snapshots = utils.get_model_snapshots(snapshot_index, train_folder, pose_task)
+		if not snapshots:
+			return f"{config_path}|iter={analyze_iteration}|no-snapshot"
+		snap_path = Path(snapshots[0].path)
+		mtime = snap_path.stat().st_mtime if snap_path.is_file() else 0.0
+		return f"{config_path}|iter={analyze_iteration}|{snap_path.name}|{mtime}"
+
+	def load(
+		self,
+		project_config_path: str,
+		*,
+		batch_size: int = 1,
+		force: bool = False,
+	) -> None:
+		"""Build warm pose (+ detector) runners from a DLC project config.yaml.
+
+		``force=True`` always reloads (e.g. after Train Network). Otherwise reload
+		when the resolved iteration/snapshot fingerprint changes.
+		"""
+		config_resolved = str(Path(project_config_path).expanduser().resolve())
+		try:
+			fingerprint = self._fingerprint_for_config(config_resolved)
+		except Exception:
+			# Fall back to path-only compare if fingerprinting fails mid-setup.
+			fingerprint = config_resolved
+
 		with self._lock:
-			if self._ready and self._config_path == str(
-				Path(project_config_path).expanduser().resolve()
+			if (
+				not force
+				and self._ready
+				and self._config_path == config_resolved
+				and self._weights_fingerprint == fingerprint
 			):
 				return
 			self._ready = False
@@ -100,10 +163,14 @@ class LiveInferenceService:
 			self._bodyparts = []
 			self._cache.clear()
 			self._last_by_video.clear()
+			self._pending = None
+			self._weights_fingerprint = None
 		self._close_capture()
 
 		try:
 			self._load_runners(project_config_path, batch_size=batch_size)
+			with self._lock:
+				self._weights_fingerprint = fingerprint
 		except Exception as exc:
 			logger.exception("Live inference failed to load model")
 			with self._lock:
@@ -217,6 +284,7 @@ class LiveInferenceService:
 			self._last_by_video.clear()
 			self._ready = False
 			self._config_path = None
+			self._weights_fingerprint = None
 			self._on_result = None
 		self._close_capture()
 

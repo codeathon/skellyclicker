@@ -22,6 +22,49 @@ def test_cache_roundtrip_and_lru():
 	assert svc.get_cached("a.mp4", 3) is not None
 
 
+def test_load_force_clears_cache_even_when_path_unchanged():
+	svc = LiveInferenceService()
+	svc._ready = True
+	svc._config_path = "/tmp/proj/config.yaml"
+	svc._weights_fingerprint = "stale"
+	svc._store_cache("a.mp4", 1, {"nose": (1.0, 2.0)})
+	assert svc.get_cached("a.mp4", 1) is not None
+
+	calls: list[tuple[str, bool]] = []
+
+	def fake_load_runners(path: str, *, batch_size: int = 1):
+		calls.append((path, True))
+		svc._ready = True
+		svc._config_path = path
+
+	svc._fingerprint_for_config = staticmethod(lambda _p: "stale")  # type: ignore[method-assign]
+	svc._load_runners = fake_load_runners  # type: ignore[method-assign]
+	svc.load("/tmp/proj/config.yaml", force=True)
+	assert calls, "force=True must reload runners"
+	assert svc.get_cached("a.mp4", 1) is None
+
+
+def test_load_reloads_when_fingerprint_changes():
+	svc = LiveInferenceService()
+	svc._ready = True
+	svc._config_path = "/tmp/proj/config.yaml"
+	svc._weights_fingerprint = "iter=0|snap.pt"
+	svc._store_cache("a.mp4", 1, {"nose": (1.0, 2.0)})
+	calls: list[str] = []
+
+	def fake_load_runners(path: str, *, batch_size: int = 1):
+		calls.append(path)
+		svc._ready = True
+		svc._config_path = path
+
+	svc._fingerprint_for_config = staticmethod(lambda _p: "iter=1|snap.pt")  # type: ignore[method-assign]
+	svc._load_runners = fake_load_runners  # type: ignore[method-assign]
+	svc.load("/tmp/proj/config.yaml")
+	assert calls == ["/tmp/proj/config.yaml"]
+	assert svc.get_cached("a.mp4", 1) is None
+	assert svc.weights_fingerprint == "iter=1|snap.pt"
+
+
 def test_prediction_to_points_drops_nan_and_low_likelihood():
 	coords = np.array(
 		[
