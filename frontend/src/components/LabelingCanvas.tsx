@@ -27,7 +27,7 @@ const WEB_FULL_HELP_TEXT = `Click the video to place the active bodypart.
 Use 'a' / 'd' or arrow keys for previous / next frame.
 Finish all bodyparts on a frame before leaving it (empty frames may be skipped).
 Drag the frame slider to scrub previews.
-Use the contrast slider when paused to brighten dark frames (display only).
+Use the vertical contrast slider (left of the frame) when paused — up = more contrast.
 Press 'm' to toggle machine / live prediction overlay.
 Press 'n' to toggle bodypart names on the video.
 Press 'h' to hide this help.
@@ -129,6 +129,8 @@ export function LabelingCanvas({
 	const [playing, setPlaying] = useState(false);
 	const [contrast, setContrast] = useState(CONTRAST_DEFAULT);
 	const contrastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Vertical rail length = 1/4 of the frame stage height.
+	const [contrastSliderPx, setContrastSliderPx] = useState(120);
 
 	useEffect(() => {
 		labelsPathRef.current = humanLabelsPath;
@@ -498,6 +500,19 @@ export function LabelingCanvas({
 	useEffect(() => {
 		const stage = stageRef.current;
 		if (!stage) return;
+		const update = () => {
+			const h = stage.clientHeight;
+			if (h > 0) setContrastSliderPx(Math.max(64, Math.round(h * 0.25)));
+		};
+		update();
+		const observer = new ResizeObserver(update);
+		observer.observe(stage);
+		return () => observer.disconnect();
+	}, [state?.session_id]);
+
+	useEffect(() => {
+		const stage = stageRef.current;
+		if (!stage) return;
 		const observer = new ResizeObserver(() => fitCanvasToStage());
 		observer.observe(stage);
 		return () => observer.disconnect();
@@ -809,6 +824,51 @@ export function LabelingCanvas({
 						<p className="labeling-frame-list-empty hint">No labeled frames yet</p>
 					)}
 				</aside>
+				{!playing && !scrubbing && (
+					<aside
+						className="labeling-contrast-rail"
+						aria-label="Frame contrast"
+						style={
+							{
+								["--contrast-slider-h" as string]: `${contrastSliderPx}px`,
+							} as CSSProperties
+						}
+					>
+						<span
+							className="frame-contrast-value"
+							title="Double-click to reset to 100%"
+							onDoubleClick={() => {
+								if (isClosing) return;
+								setContrast(CONTRAST_DEFAULT);
+								if (contrastTimerRef.current != null) {
+									clearTimeout(contrastTimerRef.current);
+									contrastTimerRef.current = null;
+								}
+								void applyContrast(CONTRAST_DEFAULT);
+							}}
+						>
+							{Math.round(contrast * 100)}%
+						</span>
+						<input
+							id="contrast-slider"
+							className="frame-contrast-slider"
+							type="range"
+							min={CONTRAST_MIN}
+							max={CONTRAST_MAX}
+							step={CONTRAST_STEP}
+							value={contrast}
+							disabled={isClosing}
+							aria-valuetext={`${Math.round(contrast * 100)} percent`}
+							aria-orientation="vertical"
+							title="Drag up for more contrast (display only)"
+							onInput={(e) => onContrastInput(Number(e.currentTarget.value))}
+							onChange={(e) => onContrastInput(Number(e.currentTarget.value))}
+						/>
+						<label htmlFor="contrast-slider" className="frame-contrast-label">
+							Contrast
+						</label>
+					</aside>
+				)}
 				<div className="labeling-center">
 					<div className="labeling-nav labeling-nav--actions">
 						<p className="hint labeling-save-hint">
@@ -1025,40 +1085,6 @@ export function LabelingCanvas({
 						{sliderFrame} / {state.frame_count}
 					</span>
 				</div>
-				{!playing && !scrubbing && (
-					<div className="frame-contrast-row">
-						<label htmlFor="contrast-slider">Contrast</label>
-						<input
-							id="contrast-slider"
-							className="frame-contrast-slider"
-							type="range"
-							min={CONTRAST_MIN}
-							max={CONTRAST_MAX}
-							step={CONTRAST_STEP}
-							value={contrast}
-							disabled={isClosing}
-							aria-valuetext={`${Math.round(contrast * 100)} percent`}
-							title="Drag to adjust contrast (display only). Double-click value to reset to 100%."
-							onInput={(e) => onContrastInput(Number(e.currentTarget.value))}
-							onChange={(e) => onContrastInput(Number(e.currentTarget.value))}
-						/>
-						<span
-							className="frame-contrast-value"
-							title="Double-click to reset to 100%"
-							onDoubleClick={() => {
-								if (isClosing) return;
-								setContrast(CONTRAST_DEFAULT);
-								if (contrastTimerRef.current != null) {
-									clearTimeout(contrastTimerRef.current);
-									contrastTimerRef.current = null;
-								}
-								void applyContrast(CONTRAST_DEFAULT);
-							}}
-						>
-							{Math.round(contrast * 100)}%
-						</span>
-					</div>
-				)}
 				{playing && (
 					<p className="hint scrub-hint">Playing preview frames — pause to edit labels</p>
 				)}
