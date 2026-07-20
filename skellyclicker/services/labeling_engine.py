@@ -109,14 +109,24 @@ class LabelingEngine(BaseModel):
 
 	def set_frame(self, frame_number: int) -> None:
 		"""Commit frame navigation and refresh per-frame labeler behavior."""
-		self.frame_number = frame_number
+		from skellyclicker.services.errors import SessionError
+
+		target = int(frame_number)
+		# Once the user starts labeling a frame, require every bodypart before leaving.
+		if target != self.frame_number:
+			block = self.video_handler.data_handler.incomplete_labeling_message(
+				self.frame_number
+			)
+			if block:
+				raise SessionError(block)
+		self.frame_number = target
 		self._frame_had_human_on_entry = self._frame_has_human_labels()
 		self._sync_auto_next_point_for_frame()
 		if self.auto_next_point:
-			self.video_handler.data_handler.reset_active_point_for_frame(frame_number)
+			self.video_handler.data_handler.reset_active_point_for_frame(target)
 		# Prefetch display-only live prediction so the stopped scrub frame can
 		# guide human labeling (live overlay is never saved).
-		self._maybe_request_live_infer(frame_number)
+		self._maybe_request_live_infer(target)
 
 	def _frame_has_human_labels(self) -> bool:
 		"""True when any human label exists on this frame (any camera)."""

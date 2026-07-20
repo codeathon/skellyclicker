@@ -334,10 +334,13 @@ def create_dlc(body: CreateProjectBody) -> AppSession:
 		tracked_point_names=bodyparts,
 	)
 	store.dlc_handler = handler
-	full_path = str(Path(body.parent_directory) / body.project_name)
-	store.session.dlc_project_path = full_path
+	# Prefer config parent — same folder create_new_deeplabcut_project actually wrote.
+	project_dir = Path(handler.project_config_path).expanduser().resolve().parent
+	store.session.dlc_project_path = str(project_dir)
 	store.session.dlc_iteration = handler.iteration
 	store.session.tracked_point_names = bodyparts
+	# Human labels always live under this project's labeled-data.
+	store._bind_human_labels_to_dlc_project(project_dir)
 	# New project has no trained weights and no machine CSV for this session —
 	# drop leftover live runners / machine path from a prior project.
 	store._close_live_inference()
