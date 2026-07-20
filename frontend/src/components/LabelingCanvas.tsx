@@ -1037,17 +1037,16 @@ export function LabelingCanvas({
 							step={CONTRAST_STEP}
 							value={contrast}
 							disabled={isClosing}
+							aria-valuetext={`${Math.round(contrast * 100)} percent`}
+							title="Drag to adjust contrast (display only). Double-click value to reset to 100%."
 							onInput={(e) => onContrastInput(Number(e.currentTarget.value))}
 							onChange={(e) => onContrastInput(Number(e.currentTarget.value))}
 						/>
-						<span className="frame-contrast-value">
-							{Math.round(contrast * 100)}%
-						</span>
-						<button
-							type="button"
-							className="frame-contrast-reset"
-							disabled={isClosing || Math.abs(contrast - CONTRAST_DEFAULT) < 0.001}
-							onClick={() => {
+						<span
+							className="frame-contrast-value"
+							title="Double-click to reset to 100%"
+							onDoubleClick={() => {
+								if (isClosing) return;
 								setContrast(CONTRAST_DEFAULT);
 								if (contrastTimerRef.current != null) {
 									clearTimeout(contrastTimerRef.current);
@@ -1056,8 +1055,8 @@ export function LabelingCanvas({
 								void applyContrast(CONTRAST_DEFAULT);
 							}}
 						>
-							Reset
-						</button>
+							{Math.round(contrast * 100)}%
+						</span>
 					</div>
 				)}
 				{playing && (

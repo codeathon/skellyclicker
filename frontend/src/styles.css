@@ -973,13 +973,13 @@ button:disabled {
   color: #8b9cb3;
 }
 
-.frame-scrubber input[type="range"]:not(.frame-scrubber-slider) {
+.frame-scrubber input[type="range"]:not(.frame-scrubber-slider):not(.frame-contrast-slider) {
   width: 100%;
   accent-color: #7eb8ff;
   cursor: pointer;
 }
 
-.frame-scrubber--scrubbing input[type="range"]:not(.frame-scrubber-slider) {
+.frame-scrubber--scrubbing input[type="range"]:not(.frame-scrubber-slider):not(.frame-contrast-slider) {
   accent-color: #ffb86c;
 }
 
@@ -988,6 +988,8 @@ button:disabled {
   align-items: center;
   gap: 0.55rem;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .frame-contrast-row label {
@@ -997,12 +999,61 @@ button:disabled {
   color: #8b9cb3;
 }
 
+/*
+ * Explicit track + thumb: flex min-width:0 was collapsing the range to a lone
+ * circular thumb that only jumped between ends (looked like a toggle).
+ */
 .frame-contrast-slider {
-  flex: 1;
-  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 12rem;
+  min-width: 12rem;
+  width: 100%;
+  height: 1.35rem;
   margin: 0;
-  accent-color: #9ad0a8;
+  padding: 0;
+  background: transparent;
   cursor: pointer;
+}
+
+.frame-contrast-slider:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.frame-contrast-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #2a3441;
+  border: 1px solid #3a4a5c;
+}
+
+.frame-contrast-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: #9ad0a8;
+  border: 1px solid #6a9a78;
+  box-shadow: 0 0 0 1px #1a2230;
+}
+
+.frame-contrast-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #2a3441;
+  border: 1px solid #3a4a5c;
+}
+
+.frame-contrast-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #9ad0a8;
+  border: 1px solid #6a9a78;
+  box-shadow: 0 0 0 1px #1a2230;
 }
 
 .frame-contrast-value {
@@ -1012,13 +1063,8 @@ button:disabled {
   color: #8b9cb3;
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-.frame-contrast-reset {
-  flex-shrink: 0;
-  margin: 0;
-  padding: 0.15rem 0.5rem;
-  font-size: 0.75rem;
+  cursor: default;
+  user-select: none;
 }
 
 .scrub-hint {
