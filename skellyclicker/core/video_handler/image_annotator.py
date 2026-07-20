@@ -57,6 +57,7 @@ WEB_FULL_HELP_TEXT = (
     "Use 'a' / 'd' or arrow keys for previous / next frame.\n"
     "Finish all bodyparts on a frame before leaving it (empty frames may be skipped).\n"
     "Drag the frame slider to scrub previews.\n"
+    "Use the contrast slider when paused (display only; not saved).\n"
     "Press 'm' to toggle machine / live prediction overlay.\n"
     "Press 'n' to toggle bodypart names on the video.\n"
     "Press 'h' to hide this help.\n"

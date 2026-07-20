@@ -56,7 +56,8 @@ class VideoPlaybackState(BaseModel):
         None  # rescale info to put it within the grid
     )
     zoom_state: ZoomState = ZoomState()  # how much the user has zoomed in on the video
-    contrast: int = 1
+    # OpenCV convertScaleAbs alpha — 1.0 is neutral (Tk viewer also uses floats).
+    contrast: float = 1.0
     brightness: int = 0
 
     @property

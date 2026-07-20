@@ -27,6 +27,7 @@ const WEB_FULL_HELP_TEXT = `Click the video to place the active bodypart.
 Use 'a' / 'd' or arrow keys for previous / next frame.
 Finish all bodyparts on a frame before leaving it (empty frames may be skipped).
 Drag the frame slider to scrub previews.
+Use the contrast slider when paused to brighten dark frames (display only).
 Press 'm' to toggle machine / live prediction overlay.
 Press 'n' to toggle bodypart names on the video.
 Press 'h' to hide this help.
@@ -38,6 +39,11 @@ Press 'u' or Ctrl+Z to undo the last label (or clear active label on frame).`;
 const PLAY_INTERVAL_MS = 66;
 /** After scrub release, repaint a few times so late live-infer crosses appear. */
 const LIVE_OVERLAY_RETRY_MS = [120, 280, 500];
+/** Matches labeling_engine CONTRAST_* — display-only OpenCV alpha. */
+const CONTRAST_MIN = 0.25;
+const CONTRAST_MAX = 3;
+const CONTRAST_DEFAULT = 1;
+const CONTRAST_STEP = 0.05;
 
 function formatPointList(points: string[]): string {
 	return `[${points.join(", ")}]`;
@@ -121,6 +127,8 @@ export function LabelingCanvas({
 	// upscale in place instead of shrinking the on-screen box.
 	const lockedDisplaySizeRef = useRef<{ w: number; h: number } | null>(null);
 	const [playing, setPlaying] = useState(false);
+	const [contrast, setContrast] = useState(CONTRAST_DEFAULT);
+	const contrastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
 		labelsPathRef.current = humanLabelsPath;
@@ -128,6 +136,9 @@ export function LabelingCanvas({
 
 	useEffect(() => {
 		stateRef.current = state;
+		if (typeof state?.contrast === "number") {
+			setContrast(state.contrast);
+		}
 	}, [state]);
 
 	const fitCanvasToStage = useCallback(() => {
@@ -295,6 +306,41 @@ export function LabelingCanvas({
 		[fetchAndPaintFrame, clearLiveOverlayRetries, scheduleLiveOverlayRetries],
 	);
 
+	const applyContrast = useCallback(
+		async (value: number) => {
+			if (closingRef.current || playingRef.current || scrubbingRef.current) return;
+			const clamped = Math.min(
+				CONTRAST_MAX,
+				Math.max(CONTRAST_MIN, value),
+			);
+			try {
+				const s = await client.setContrast(clamped);
+				setState(s);
+				if (typeof s.contrast === "number") setContrast(s.contrast);
+				else setContrast(clamped);
+				const gen = ++previewGenRef.current;
+				await fetchAndPaintFrame(frameRef.current, false, gen);
+			} catch (err) {
+				if (!isIgnorableFetchError(err)) {
+					setError(err instanceof Error ? err.message : String(err));
+				}
+			}
+		},
+		[fetchAndPaintFrame],
+	);
+
+	const onContrastInput = useCallback(
+		(value: number) => {
+			setContrast(value);
+			if (contrastTimerRef.current != null) clearTimeout(contrastTimerRef.current);
+			contrastTimerRef.current = setTimeout(() => {
+				contrastTimerRef.current = null;
+				void applyContrast(value);
+			}, 60);
+		},
+		[applyContrast],
+	);
+
 	const stopPlaying = useCallback(
 		(commit = true) => {
 			if (playTimerRef.current != null) {
@@ -436,6 +482,7 @@ export function LabelingCanvas({
 			clearLiveOverlayRetries();
 			if (scrubRafRef.current != null) cancelAnimationFrame(scrubRafRef.current);
 			if (playTimerRef.current != null) clearInterval(playTimerRef.current);
+			if (contrastTimerRef.current != null) clearTimeout(contrastTimerRef.current);
 			playingRef.current = false;
 		};
 	}, [refresh, clearLiveOverlayRetries]);
@@ -978,6 +1025,41 @@ export function LabelingCanvas({
 						{sliderFrame} / {state.frame_count}
 					</span>
 				</div>
+				{!playing && !scrubbing && (
+					<div className="frame-contrast-row">
+						<label htmlFor="contrast-slider">Contrast</label>
+						<input
+							id="contrast-slider"
+							className="frame-contrast-slider"
+							type="range"
+							min={CONTRAST_MIN}
+							max={CONTRAST_MAX}
+							step={CONTRAST_STEP}
+							value={contrast}
+							disabled={isClosing}
+							onInput={(e) => onContrastInput(Number(e.currentTarget.value))}
+							onChange={(e) => onContrastInput(Number(e.currentTarget.value))}
+						/>
+						<span className="frame-contrast-value">
+							{Math.round(contrast * 100)}%
+						</span>
+						<button
+							type="button"
+							className="frame-contrast-reset"
+							disabled={isClosing || Math.abs(contrast - CONTRAST_DEFAULT) < 0.001}
+							onClick={() => {
+								setContrast(CONTRAST_DEFAULT);
+								if (contrastTimerRef.current != null) {
+									clearTimeout(contrastTimerRef.current);
+									contrastTimerRef.current = null;
+								}
+								void applyContrast(CONTRAST_DEFAULT);
+							}}
+						>
+							Reset
+						</button>
+					</div>
+				)}
 				{playing && (
 					<p className="hint scrub-hint">Playing preview frames — pause to edit labels</p>
 				)}

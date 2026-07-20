@@ -110,6 +110,10 @@ class ActivePointBody(BaseModel):
 	point_name: str
 
 
+class ContrastBody(BaseModel):
+	contrast: float
+
+
 class ActiveVideoBody(BaseModel):
 	"""Switch corpus labeler to another session video (path or basename)."""
 	path: str
@@ -441,6 +445,15 @@ def set_active_point(body: ActivePointBody):
 		store.labeling_engine.set_active_point(body.point_name)
 	except ValueError as exc:
 		raise HTTPException(status_code=400, detail=str(exc)) from exc
+	return store.labeling_engine.state_dict()
+
+
+@app.post("/api/labeling/contrast")
+def set_labeling_contrast(body: ContrastBody):
+	"""Display-only contrast for the paused labeler frame (not saved with labels)."""
+	if not store.labeling_engine:
+		raise HTTPException(status_code=400, detail="Labeler is not open")
+	store.labeling_engine.set_contrast(body.contrast)
 	return store.labeling_engine.state_dict()
 
 
