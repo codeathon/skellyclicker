@@ -310,7 +310,7 @@ export function LabelingCanvas({
 
 	const applyContrast = useCallback(
 		async (value: number) => {
-			if (closingRef.current || playingRef.current || scrubbingRef.current) return;
+			if (closingRef.current || playingRef.current) return;
 			const clamped = Math.min(
 				CONTRAST_MAX,
 				Math.max(CONTRAST_MIN, value),
@@ -824,51 +824,50 @@ export function LabelingCanvas({
 						<p className="labeling-frame-list-empty hint">No labeled frames yet</p>
 					)}
 				</aside>
-				{!playing && !scrubbing && (
-					<aside
-						className="labeling-contrast-rail"
-						aria-label="Frame contrast"
-						style={
-							{
-								["--contrast-slider-h" as string]: `${contrastSliderPx}px`,
-							} as CSSProperties
-						}
+				{/* Keep rail mounted while scrubbing/playing so the frame stage does not shift. */}
+				<aside
+					className="labeling-contrast-rail"
+					aria-label="Frame contrast"
+					style={
+						{
+							["--contrast-slider-h" as string]: `${contrastSliderPx}px`,
+						} as CSSProperties
+					}
+				>
+					<span
+						className="frame-contrast-value"
+						title="Double-click to reset to 100%"
+						onDoubleClick={() => {
+							if (isClosing || playing) return;
+							setContrast(CONTRAST_DEFAULT);
+							if (contrastTimerRef.current != null) {
+								clearTimeout(contrastTimerRef.current);
+								contrastTimerRef.current = null;
+							}
+							void applyContrast(CONTRAST_DEFAULT);
+						}}
 					>
-						<span
-							className="frame-contrast-value"
-							title="Double-click to reset to 100%"
-							onDoubleClick={() => {
-								if (isClosing) return;
-								setContrast(CONTRAST_DEFAULT);
-								if (contrastTimerRef.current != null) {
-									clearTimeout(contrastTimerRef.current);
-									contrastTimerRef.current = null;
-								}
-								void applyContrast(CONTRAST_DEFAULT);
-							}}
-						>
-							{Math.round(contrast * 100)}%
-						</span>
-						<input
-							id="contrast-slider"
-							className="frame-contrast-slider"
-							type="range"
-							min={CONTRAST_MIN}
-							max={CONTRAST_MAX}
-							step={CONTRAST_STEP}
-							value={contrast}
-							disabled={isClosing}
-							aria-valuetext={`${Math.round(contrast * 100)} percent`}
-							aria-orientation="vertical"
-							title="Drag up for more contrast (display only)"
-							onInput={(e) => onContrastInput(Number(e.currentTarget.value))}
-							onChange={(e) => onContrastInput(Number(e.currentTarget.value))}
-						/>
-						<label htmlFor="contrast-slider" className="frame-contrast-label">
-							Contrast
-						</label>
-					</aside>
-				)}
+						{Math.round(contrast * 100)}%
+					</span>
+					<input
+						id="contrast-slider"
+						className="frame-contrast-slider"
+						type="range"
+						min={CONTRAST_MIN}
+						max={CONTRAST_MAX}
+						step={CONTRAST_STEP}
+						value={contrast}
+						disabled={isClosing || playing}
+						aria-valuetext={`${Math.round(contrast * 100)} percent`}
+						aria-orientation="vertical"
+						title="Drag up for more contrast (display only)"
+						onInput={(e) => onContrastInput(Number(e.currentTarget.value))}
+						onChange={(e) => onContrastInput(Number(e.currentTarget.value))}
+					/>
+					<label htmlFor="contrast-slider" className="frame-contrast-label">
+						Contrast
+					</label>
+				</aside>
 				<div className="labeling-center">
 					<div className="labeling-nav labeling-nav--actions">
 						<p className="hint labeling-save-hint">
