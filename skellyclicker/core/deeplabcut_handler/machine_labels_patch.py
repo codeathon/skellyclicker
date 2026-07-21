@@ -44,3 +44,37 @@ def patch_machine_labels_csv(
 	result = existing.reset_index()
 	result.to_csv(out, index=False)
 	return out
+
+
+def export_per_video_machine_csvs(
+	machine_csv: str | Path,
+	video_paths: list[str],
+) -> list[Path]:
+	"""Copy each video's rows from the combined machine CSV next to that video.
+
+	Writes ``{video_dir}/{stem}.csv`` (e.g. ``eye1.avi`` → ``eye1.csv``).
+	A later Full Analysis / iteration overwrites the same path; other CSVs in
+	the folder are left alone.
+	"""
+	src = Path(machine_csv).expanduser().resolve()
+	if not src.is_file():
+		raise FileNotFoundError(f"Machine labels CSV not found: {src}")
+	df = pd.read_csv(src)
+	if "video" not in df.columns:
+		raise ValueError(f"Machine labels CSV missing 'video' column: {src}")
+	df = df.copy()
+	df["video"] = df["video"].astype(str)
+
+	written: list[Path] = []
+	for raw in video_paths:
+		video = Path(raw).expanduser().resolve()
+		stem = video.stem
+		name = video.name
+		# Match basename or stem — merge may store .mp4 even when the file is .avi.
+		mask = (df["video"] == name) | (df["video"].map(lambda v: Path(v).stem) == stem)
+		rows = df.loc[mask]
+		out = video.parent / f"{stem}.csv"
+		# Same path each iteration — overwrite in place; do not delete other CSVs.
+		rows.to_csv(out, index=False)
+		written.append(out)
+	return written

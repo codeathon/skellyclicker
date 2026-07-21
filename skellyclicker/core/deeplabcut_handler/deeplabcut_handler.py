@@ -322,6 +322,18 @@ class DeeplabcutHandler(BaseModel):
             filtered=filter_videos,
         )
 
+        # Also drop per-video copies beside each source file (eye1.avi → eye1.csv).
+        from skellyclicker.core.deeplabcut_handler.machine_labels_patch import (
+            export_per_video_machine_csvs,
+        )
+
+        report(0.94, "Copying per-video machine label CSVs…")
+        per_video = export_per_video_machine_csvs(csv_path, video_paths)
+        logger.info(
+            "Wrote %d per-video machine CSV(s) next to source videos",
+            len(per_video),
+        )
+
         if annotate_videos:
             report(0.96, "Annotating videos…")
             self.annotate_videos(
