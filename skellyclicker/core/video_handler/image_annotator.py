@@ -238,7 +238,8 @@ class ImageAnnotatorConfig(BaseModel):
     # Web labeler draws legend/help/status in HTML; keep only markers on the JPEG.
     external_hud: bool = False
     show_clicks: bool = True
-    show_names: bool = True
+    # Web/Tk labeler default: markers only; n toggles names.
+    show_names: bool = False
     show_legend: bool = True
     tracked_points: list[str] = []
 

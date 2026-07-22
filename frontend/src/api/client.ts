@@ -96,6 +96,17 @@ export interface BackgroundJob {
   progress_percent: number | null;
 }
 
+/** API failure with HTTP status — 409 conflicts are soft warnings in the UI. */
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -122,7 +133,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       if (raw.trim()) message = raw.trim().slice(0, 500);
     }
-    throw new Error(message);
+    throw new ApiError(message, res.status);
   }
   return res.json();
 }

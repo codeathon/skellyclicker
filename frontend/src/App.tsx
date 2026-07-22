@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppSession, client } from "./api/client";
+import { ApiError, AppSession, client } from "./api/client";
 import { humanLabelsDisplayName, labelsFileBasename } from "./api/labelsCsvName";
 import { pathDialog } from "./api/pathDialog";
 import { DlcSettings } from "./components/DlcSettings";
@@ -17,6 +17,9 @@ import {
   trainBlockReason,
   StepId,
 } from "./workflow/workflowSteps";
+
+/** Soft banner duration for "job still running" conflicts. */
+const WARNING_FLASH_MS = 3500;
 
 /** Set true to show Import Human/Machine Labels under Resume / import. */
 const SHOW_LABEL_IMPORT_CONTROLS = false;
@@ -71,10 +74,27 @@ function headerLabel(session: AppSession, labeling: boolean): string | null {
 export default function App() {
   const [session, setSession] = useState<AppSession | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [openingLabeler, setOpeningLabeler] = useState(false);
   const [jobProgress, setJobProgress] = useState<JobProgressState | null>(null);
   const watchedJobRef = useRef<string | null>(null);
   const hideJobTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashWarning = useCallback((message: string) => {
+    setWarning(message);
+    if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+    warningTimerRef.current = setTimeout(() => {
+      setWarning(null);
+      warningTimerRef.current = null;
+    }, WARNING_FLASH_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
     setSession(await client.getSession());
@@ -189,12 +209,23 @@ export default function App() {
     return () => document.body.classList.remove("labeling-mode");
   }, [labeling]);
 
+  const reportFailure = useCallback(
+    (e: unknown) => {
+      if (e instanceof ApiError && e.status === 409) {
+        flashWarning(e.message);
+        return;
+      }
+      setError(e instanceof Error ? e.message : String(e));
+    },
+    [flashWarning],
+  );
+
   const run = async (fn: () => Promise<AppSession>) => {
     try {
       setError(null);
       setSession(await fn());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      reportFailure(e);
     }
   };
 
@@ -229,6 +260,11 @@ export default function App() {
 
         <main className={labeling ? "main--labeling" : undefined}>
           {error && <div className="error">{error}</div>}
+          {warning && (
+            <div className="warning" role="status">
+              {warning}
+            </div>
+          )}
           {jobProgress && <JobProgressBar progress={jobProgress} />}
           {!labeling && (
             <>
@@ -406,7 +442,7 @@ export default function App() {
                       const { job_id } = await client.train();
                       await startJob(job_id, "Train Network");
                     } catch (e) {
-                      setError(e instanceof Error ? e.message : String(e));
+                      reportFailure(e);
                     }
                   }}
                 >
@@ -424,7 +460,7 @@ export default function App() {
                       const { job_id } = await client.analyze(paths, true);
                       await startJob(job_id, "Full Analysis");
                     } catch (e) {
-                      setError(e instanceof Error ? e.message : String(e));
+                      reportFailure(e);
                     }
                   }}
                 >
