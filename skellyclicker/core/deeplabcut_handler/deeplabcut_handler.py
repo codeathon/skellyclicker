@@ -9,7 +9,6 @@ from deeplabcut import DEBUG
 from deeplabcut.utils import auxiliaryfunctions
 from multiprocessing import Pool
 from pathlib import Path
-import pandas as pd
 from pydantic import BaseModel
 from time import perf_counter_ns
 
@@ -27,8 +26,7 @@ from skellyclicker.core.deeplabcut_handler.create_deeplabcut.deelabcut_project_c
 from skellyclicker.core.deeplabcut_handler.analyze_videos_dlc import analyze_videos_dlc
 from skellyclicker.core.deeplabcut_handler.partial_analyze_dlc import partial_analyze_human_labels
 from skellyclicker.core.deeplabcut_handler.dlc_csv_io import (
-	dlc_analysis_csv_to_skellyclicker,
-	iter_dlc_video_csvs,
+	merge_dlc_csvs_for_skellyclicker,
 )
 
 
@@ -290,9 +288,6 @@ class DeeplabcutHandler(BaseModel):
                 destfolder=str(output_folder),
             )
 
-        report(0.86, "Plotting trajectories…")
-        deeplabcut.plot_trajectories(config=self.project_config_path, videos=video_paths, filtered=filter_videos, destfolder=str(output_folder))
-
         csv_path = Path(output_folder) / f"skellyclicker_machine_labels_iteration_{analyze_iteration}.csv"
 
         # Cross-folder analyze is allowed; merge still keys rows by video basename.
@@ -315,24 +310,40 @@ class DeeplabcutHandler(BaseModel):
             json.dump(metadata, f, indent=2)
         print(f"Saved annotation metadata to {metadata_path}")
 
-        report(0.92, "Merging machine labels CSV…")
-        self.merge_csvs_for_skellyclicker(
+        # Merge + sidecars before plot/annotate so large multi-video runs still
+        # produce machine CSVs if matplotlib/OpenCV later aborts.
+        def on_merge_progress(done: int, total: int, video_label: str) -> None:
+            if total <= 0:
+                return
+            # Reserve 0.82–0.94 for one-video-at-a-time merge/export.
+            frac = 0.82 + 0.12 * (done / total)
+            report(frac, f"Merging machine labels ({done}/{total}): {video_label}")
+
+        report(0.82, "Merging machine labels CSV…")
+        per_video = self.merge_csvs_for_skellyclicker(
             csv_folder_path=str(output_folder),
             output_path=str(csv_path),
             filtered=filter_videos,
+            video_paths=video_paths,
+            on_video_progress=on_merge_progress,
         )
-
-        # Also drop per-video copies beside each source file (eye1.avi → eye1.csv).
-        from skellyclicker.core.deeplabcut_handler.machine_labels_patch import (
-            export_per_video_machine_csvs,
-        )
-
-        report(0.94, "Copying per-video machine label CSVs…")
-        per_video = export_per_video_machine_csvs(csv_path, video_paths)
         logger.info(
             "Wrote %d per-video machine CSV(s) next to source videos",
             len(per_video),
         )
+
+        # Optional plots — must not block or undo CSV outputs on failure.
+        try:
+            report(0.95, "Plotting trajectories…")
+            deeplabcut.plot_trajectories(
+                config=self.project_config_path,
+                videos=video_paths,
+                filtered=filter_videos,
+                destfolder=str(output_folder),
+            )
+        except Exception as exc:
+            logger.exception("plot_trajectories failed after machine CSVs were written: %s", exc)
+            report(0.95, f"Plotting skipped ({exc})")
 
         if annotate_videos:
             report(0.96, "Annotating videos…")
@@ -363,27 +374,21 @@ class DeeplabcutHandler(BaseModel):
         )
 
     def merge_csvs_for_skellyclicker(
-        self, csv_folder_path: str | Path, output_path: str | Path, filtered: bool = False
-    ):
-        csv_folder_path = Path(csv_folder_path)
-        csv_paths = iter_dlc_video_csvs(csv_folder_path, filtered=filtered)
-        if not csv_paths:
-            raise FileNotFoundError(
-                f"No matching CSV files found in {csv_folder_path}. Please check the path."
-            )
-
-        dataframe_list = []
-        for csv in csv_paths:
-            video_name = Path(csv).name.split("DLC_")[0]
-            if not video_name.endswith((".mp4", ".avi")):
-                video_name = f"{video_name}.mp4"
-            dataframe_list.append(
-                dlc_analysis_csv_to_skellyclicker(csv, video_name=video_name)
-            )
-
-        df = pd.concat(dataframe_list)
-        df.to_csv(output_path)
-        logger.info("Saved skellyclicker compatible CSV to %s", output_path)
+        self,
+        csv_folder_path: str | Path,
+        output_path: str | Path,
+        filtered: bool = False,
+        video_paths: list[str] | None = None,
+        on_video_progress: Callable[[int, int, str], None] | None = None,
+    ) -> list[Path]:
+        """Stream-merge DLC CSVs; optionally write ``{stem}.csv`` beside each video."""
+        return merge_dlc_csvs_for_skellyclicker(
+            csv_folder_path,
+            output_path,
+            filtered=filtered,
+            video_paths=video_paths,
+            on_video_progress=on_video_progress,
+        )
 
     def annotate_videos(self, output_path: str | Path, video_paths: list[Path], csv_path: str | Path):
         print(

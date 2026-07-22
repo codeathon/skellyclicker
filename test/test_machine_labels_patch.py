@@ -76,6 +76,26 @@ def test_export_per_video_machine_csvs_writes_stem_named_files(tmp_path: Path):
 	assert len(pd.read_csv(combined)) == 3
 
 
+def test_export_per_video_chunked_across_many_rows(tmp_path: Path):
+	"""Chunked export must not drop rows when the combined CSV spans many chunks."""
+	vid_dir = tmp_path / "session"
+	vid_dir.mkdir()
+	eye1 = vid_dir / "eye1.avi"
+	eye2 = vid_dir / "eye2.avi"
+	eye1.write_bytes(b"")
+	eye2.write_bytes(b"")
+
+	rows = [{"video": "eye1.avi", "frame": i, "nose_x": float(i), "nose_y": 1.0} for i in range(5)]
+	rows += [{"video": "eye2.avi", "frame": i, "nose_x": float(i), "nose_y": 2.0} for i in range(3)]
+	combined = tmp_path / "machine.csv"
+	pd.DataFrame(rows).to_csv(combined, index=False)
+
+	# Tiny chunks force multiple read passes over each video's rows.
+	export_per_video_machine_csvs(combined, [str(eye1), str(eye2)], chunksize=2)
+	assert len(pd.read_csv(vid_dir / "eye1.csv")) == 5
+	assert len(pd.read_csv(vid_dir / "eye2.csv")) == 3
+
+
 def test_export_per_video_matches_stem_when_csv_extension_differs(tmp_path: Path):
 	"""Merge sometimes labels rows as .mp4 even when the source file is .avi."""
 	vid_dir = tmp_path / "clips"
