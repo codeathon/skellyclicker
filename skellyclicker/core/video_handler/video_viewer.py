@@ -38,7 +38,7 @@ class VideoViewer(BaseModel):
     last_mouse_position: tuple[int, int] | None = None
     show_help: bool = False
     auto_next_point: bool = True
-    show_names: bool = True
+    show_names: bool = False
     video_thread: threading.Thread | None = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
     should_continue: bool = True

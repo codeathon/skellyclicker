@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+# Progress: (completed_count, total_count, video_label).
+MergeProgressCallback = Callable[[int, int, str], None]
 
 
 def _dlc_header_layout(raw: pd.DataFrame) -> tuple[int, int, int]:
@@ -20,11 +25,21 @@ def _dlc_header_layout(raw: pd.DataFrame) -> tuple[int, int, int]:
 	return 1, 2, 3
 
 
+def dlc_csv_video_name(csv_path: str | Path) -> str:
+	"""Basename DeepLabCut embeds before ``DLC_`` in analyze CSV filenames."""
+	video_name = Path(csv_path).name.split("DLC_")[0]
+	if not video_name.endswith((".mp4", ".avi", ".mov", ".mkv")):
+		# Older DLC outputs omit the extension; default keeps prior behavior.
+		video_name = f"{video_name}.mp4"
+	return video_name
+
+
 def dlc_analysis_csv_to_skellyclicker(
 	csv_path: str | Path,
 	video_name: str,
 ) -> pd.DataFrame:
 	"""Convert one DLC analyze output CSV (3- or 4-row header) to skellyclicker format."""
+	# One video at a time — callers must not concat many large CSVs in memory.
 	raw = pd.read_csv(csv_path, header=None)
 	bp_row, coord_row, data_start = _dlc_header_layout(raw)
 	data = raw.iloc[data_start:].copy()
@@ -61,6 +76,77 @@ def iter_dlc_video_csvs(csv_folder: Path, filtered: bool) -> list[Path]:
 		elif "DLC_" in name:
 			paths.append(path)
 	return paths
+
+
+def _stem_to_video_path(video_paths: list[str]) -> dict[str, Path]:
+	"""Map video stem → resolved path (last wins on duplicate stems)."""
+	mapping: dict[str, Path] = {}
+	for raw in video_paths:
+		path = Path(raw).expanduser().resolve()
+		mapping[path.stem] = path
+	return mapping
+
+
+def merge_dlc_csvs_for_skellyclicker(
+	csv_folder: str | Path,
+	output_path: str | Path,
+	*,
+	filtered: bool = False,
+	video_paths: list[str] | None = None,
+	on_video_progress: MergeProgressCallback | None = None,
+) -> list[Path]:
+	"""Stream DLC per-video CSVs into one skellyclicker CSV; optionally write sidecars.
+
+	Processes **one video at a time** so many large files (e.g. several × ~400k
+	frames) never sit in memory together. When ``video_paths`` is set, also writes
+	``{stem}.csv`` beside each matching source video during the same pass.
+	"""
+	folder = Path(csv_folder)
+	out = Path(output_path)
+	csv_paths = iter_dlc_video_csvs(folder, filtered=filtered)
+	if not csv_paths:
+		raise FileNotFoundError(
+			f"No matching CSV files found in {folder}. Please check the path."
+		)
+
+	out.parent.mkdir(parents=True, exist_ok=True)
+	stem_paths = _stem_to_video_path(video_paths or [])
+	per_video_written: list[Path] = []
+	columns: list[str] | None = None
+	total = len(csv_paths)
+
+	for index, csv in enumerate(csv_paths):
+		video_name = dlc_csv_video_name(csv)
+		stem = Path(video_name).stem
+		if on_video_progress:
+			on_video_progress(index, total, video_name)
+
+		# Peak memory ≈ one DLC CSV; released before the next video.
+		indexed = dlc_analysis_csv_to_skellyclicker(csv, video_name=video_name)
+		flat = indexed.reset_index()
+		del indexed
+
+		if columns is None:
+			columns = list(flat.columns)
+			flat.to_csv(out, mode="w", header=True, index=False)
+		else:
+			# Same project bodyparts expected; pad/reorder so append stays valid.
+			flat = flat.reindex(columns=columns)
+			flat.to_csv(out, mode="a", header=False, index=False)
+
+		dest_video = stem_paths.get(stem)
+		if dest_video is not None:
+			sidecar = dest_video.parent / f"{stem}.csv"
+			# Overwrite same path each iteration; leave unrelated CSVs alone.
+			flat.to_csv(sidecar, index=False)
+			per_video_written.append(sidecar)
+
+		del flat
+		if on_video_progress:
+			on_video_progress(index + 1, total, video_name)
+
+	logger.info("Saved skellyclicker compatible CSV to %s", out)
+	return per_video_written
 
 
 def dlc_predictions_to_skellyclicker(

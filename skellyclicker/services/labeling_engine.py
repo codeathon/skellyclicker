@@ -39,7 +39,8 @@ class LabelingEngine(BaseModel):
 	auto_next_point: bool = True
 	show_machine_labels: bool = False
 	show_help: bool = False
-	show_names: bool = True
+	# Default off to reduce clutter; press n to toggle names on.
+	show_names: bool = False
 	# Synced grid vs single-video corpus — drives save merge and state_dict fields.
 	labeling_mode: LabelingMode = LabelingMode.single
 	# Full session video list (absolute paths); used for corpus video selector.

@@ -295,6 +295,16 @@ button:disabled {
   margin-bottom: 1rem;
 }
 
+/* Soft notice (e.g. job still running) — not an error. */
+.warning {
+  background: #3d351f;
+  border: 1px solid #8a7030;
+  color: #ffe6a8;
+  padding: 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}
+
 .job-log {
   background: #0a0e12;
   padding: 0.75rem;

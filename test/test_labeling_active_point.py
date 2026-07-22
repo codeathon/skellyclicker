@@ -313,13 +313,14 @@ def test_toggle_show_names_updates_annotators():
 	from unittest.mock import MagicMock
 
 	handler = MagicMock()
-	handler.image_annotator.config = MagicMock(show_names=True, show_help=False)
+	handler.image_annotator.config = MagicMock(show_names=False, show_help=False)
 	handler.machine_labels_annotator = MagicMock()
-	handler.machine_labels_annotator.config = MagicMock(show_names=True)
+	handler.machine_labels_annotator.config = MagicMock(show_names=False)
 
-	engine = LabelingEngine(video_handler=handler, show_names=True)
+	# Default is names off; toggle turns them on.
+	engine = LabelingEngine(video_handler=handler, show_names=False)
 	engine.toggle_show_names()
 
-	assert engine.show_names is False
-	assert handler.image_annotator.config.show_names is False
-	assert handler.machine_labels_annotator.config.show_names is False
+	assert engine.show_names is True
+	assert handler.image_annotator.config.show_names is True
+	assert handler.machine_labels_annotator.config.show_names is True
