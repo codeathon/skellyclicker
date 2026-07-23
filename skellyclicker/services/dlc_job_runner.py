@@ -147,12 +147,12 @@ class DLCJobRunner:
 				def on_analyze_progress(fraction: float | None, message: str) -> None:
 					self._set_progress(job, fraction, message)
 
+				# Parallelism is automatic: one worker per GPU (see resolve_worker_count).
 				machine_path = handler.analyze_videos(
 					video_paths=video_paths,
 					annotate_videos=session.annotate_videos,
 					filter_videos=session.filter_predictions,
 					output_folder=output_folder,
-					max_parallel_videos=session.analyze_parallel_workers,
 					progress_callback=on_analyze_progress,
 				)
 				if use_training_videos:

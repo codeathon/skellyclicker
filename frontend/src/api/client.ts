@@ -43,7 +43,6 @@ export interface AppSession {
   training_batch_size: number;
   filter_predictions: boolean;
   annotate_videos: boolean;
-  analyze_parallel_workers: number;
   asset_path_checks: AssetPathCheck[];
 }
 
@@ -207,7 +206,6 @@ export const client = {
   setAnalyzeOptions: (options: {
     filter_predictions?: boolean;
     annotate_videos?: boolean;
-    parallel_workers?: number;
   }) =>
     api<AppSession>("/api/analyze/options", {
       method: "POST",

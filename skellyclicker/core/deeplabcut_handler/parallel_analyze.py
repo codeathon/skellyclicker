@@ -160,30 +160,34 @@ def _drain_progress(
 	total: int,
 	progress_callback: ProgressCallback | None,
 ) -> None:
-	"""Aggregate per-video fractions into the overall inference band until done."""
+	"""Aggregate per-video fractions into one combined inference progress bar.
+
+	Deliberately shows a single combined figure (overall % + videos-complete
+	count), not per-video lines: with N GPUs all N videos run at once, so a
+	per-video breakdown is noisy and non-intuitive.
+	"""
 	fractions: dict[int, float] = {}
 	completed = 0
 	error: str | None = None
 
-	def report(latest_name: str) -> None:
+	def report() -> None:
 		mean = (sum(fractions.values()) / total) if total else 0.0
 		overall = _INFER_START + _INFER_SPAN * min(max(mean, 0.0), 1.0)
 		if progress_callback:
 			progress_callback(
 				overall,
-				f"Analyzing {total} video(s) in parallel · "
-				f"{completed}/{total} done · {latest_name}",
+				f"Analyzing {total} videos in parallel · {completed}/{total} complete",
 			)
 
 	while completed < total and error is None:
-		kind, video_index, name, payload = progress_queue.get()
+		kind, video_index, _name, payload = progress_queue.get()
 		if kind == "progress":
 			fractions[video_index] = float(payload)
-			report(name)
+			report()
 		elif kind == "done":
 			fractions[video_index] = 1.0
 			completed += 1
-			report(name)
+			report()
 		elif kind == "error":
 			error = str(payload)
 

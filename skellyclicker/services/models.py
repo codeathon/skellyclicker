@@ -64,8 +64,6 @@ class AppSession(BaseModel):
 	training_batch_size: int = 8
 	filter_predictions: bool = False
 	annotate_videos: bool = False
-	# Full Analysis: max videos analyzed at once. 0 = auto (one worker per GPU).
-	analyze_parallel_workers: int = 0
 	asset_path_checks: List[AssetPathCheck] = Field(default_factory=list)
 
 

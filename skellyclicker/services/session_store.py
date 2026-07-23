@@ -406,16 +406,12 @@ class SessionStore:
 		*,
 		filter_predictions: bool | None = None,
 		annotate_videos: bool | None = None,
-		parallel_workers: int | None = None,
 	) -> AppSession:
-		"""Update analyze-time options (filter CSV, annotated output videos, parallelism)."""
+		"""Update analyze-time options (filter CSV, annotated output videos)."""
 		if filter_predictions is not None:
 			self.session.filter_predictions = filter_predictions
 		if annotate_videos is not None:
 			self.session.annotate_videos = annotate_videos
-		if parallel_workers is not None:
-			# 0 = auto (one worker per GPU); clamp negatives to 0.
-			self.session.analyze_parallel_workers = max(0, int(parallel_workers))
 		return self.session
 
 	def _can_open_labeler(self) -> bool:

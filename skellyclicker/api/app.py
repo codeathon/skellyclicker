@@ -137,7 +137,6 @@ class TrainingSettingsBody(BaseModel):
 class AnalyzeOptionsBody(BaseModel):
 	filter_predictions: bool | None = None
 	annotate_videos: bool | None = None
-	parallel_workers: int | None = None
 
 
 class DialogBody(BaseModel):
@@ -307,16 +306,11 @@ def set_training_settings(body: TrainingSettingsBody) -> AppSession:
 
 @app.post("/api/analyze/options", response_model=AppSession)
 def set_analyze_options(body: AnalyzeOptionsBody) -> AppSession:
-	if (
-		body.filter_predictions is None
-		and body.annotate_videos is None
-		and body.parallel_workers is None
-	):
+	if body.filter_predictions is None and body.annotate_videos is None:
 		raise HTTPException(status_code=400, detail="Provide at least one analyze option")
 	return store.set_analyze_options(
 		filter_predictions=body.filter_predictions,
 		annotate_videos=body.annotate_videos,
-		parallel_workers=body.parallel_workers,
 	)
 
 
