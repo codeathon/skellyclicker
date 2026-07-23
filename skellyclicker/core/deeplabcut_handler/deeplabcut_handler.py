@@ -245,11 +245,16 @@ class DeeplabcutHandler(BaseModel):
         output_folder: str | Path,
         annotate_videos: bool = False,
         filter_videos: bool = True,
+        max_parallel_videos: int | None = None,
         progress_callback: Callable[[float | None, str], None] | None = None,
     ) -> str:
         from skellyclicker.services.dlc_paths import (
             dlc_project_dir,
             resolve_analyze_iteration,
+        )
+        from skellyclicker.core.deeplabcut_handler.parallel_analyze import (
+            analyze_videos_parallel,
+            resolve_worker_count,
         )
 
         def report(fraction: float | None, message: str) -> None:
@@ -263,18 +268,34 @@ class DeeplabcutHandler(BaseModel):
         Path(output_folder).mkdir(parents=True, exist_ok=True)
 
         n_videos = max(len(video_paths), 1)
-        report(0.05, f"Analyzing {n_videos} video(s)…")
-        analyze_videos_dlc(
+        # Auto (None/0) -> one worker per GPU; single GPU / one video -> sequential.
+        workers = resolve_worker_count(len(video_paths), max_parallel_videos)
+        analyze_kwargs = dict(
             config=str(self.project_config_path),
-            videos=video_paths,
             videotype=".mp4",
             save_as_csv=True,
             destfolder=str(output_folder),
             batch_size=8,
-            multiprocess=progress_callback is None,
             overwrite=True,
-            progress_callback=progress_callback,
         )
+
+        if workers > 1:
+            report(0.05, f"Analyzing {n_videos} video(s) across {workers} GPU worker(s)…")
+            analyze_videos_parallel(
+                video_paths=video_paths,
+                analyze_kwargs=analyze_kwargs,
+                worker_count=workers,
+                progress_callback=progress_callback,
+            )
+        else:
+            report(0.05, f"Analyzing {n_videos} video(s)…")
+            # multiprocess only when no progress callback (legacy script path).
+            analyze_videos_dlc(
+                videos=video_paths,
+                multiprocess=progress_callback is None,
+                progress_callback=progress_callback,
+                **analyze_kwargs,
+            )
         report(0.75, "Inference complete")
 
         if filter_videos:

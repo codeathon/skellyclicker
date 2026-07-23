@@ -115,6 +115,29 @@ export function DlcSettings({ session, onUpdate }: Props) {
         <p className="hint inline-hint">
           Annotated videos are slower to produce; use when you need visual QC.
         </p>
+        <label>
+          Parallel videos (0 = auto per GPU)
+          <input
+            type="number"
+            min={0}
+            max={8}
+            defaultValue={session.analyze_parallel_workers}
+            key={`parallel-${session.analyze_parallel_workers}`}
+            onBlur={(e) => {
+              const parsed = Number.parseInt(e.target.value, 10);
+              if (!Number.isFinite(parsed) || parsed < 0 || parsed > 8) return;
+              if (parsed === session.analyze_parallel_workers) return;
+              onUpdate(() =>
+                client.setAnalyzeOptions({ parallel_workers: parsed }),
+              );
+            }}
+          />
+        </label>
+        <p className="hint inline-hint">
+          With 2+ GPUs, analyzes one video per GPU (up to ~2x faster). On a single
+          GPU, leave at auto — running multiple at once shares one card and rarely
+          helps.
+        </p>
       </fieldset>
     </div>
   );

@@ -152,6 +152,7 @@ class DLCJobRunner:
 					annotate_videos=session.annotate_videos,
 					filter_videos=session.filter_predictions,
 					output_folder=output_folder,
+					max_parallel_videos=session.analyze_parallel_workers,
 					progress_callback=on_analyze_progress,
 				)
 				if use_training_videos:
