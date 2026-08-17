@@ -333,8 +333,13 @@ class DeeplabcutHandler(BaseModel):
         )
 
         # Optional plots — must not block or undo CSV outputs on failure.
+        # Force Agg: DLC defaults often pick TkAgg; plotting runs on a job thread and
+        # Tk GC at shutdown then aborts with Tcl_AsyncDelete / core dump.
         try:
             report(0.95, "Plotting trajectories…")
+            import matplotlib
+
+            matplotlib.use("Agg", force=True)
             deeplabcut.plot_trajectories(
                 config=self.project_config_path,
                 videos=video_paths,
