@@ -277,17 +277,6 @@ class DeeplabcutHandler(BaseModel):
         )
         report(0.75, "Inference complete")
 
-        if filter_videos:
-            report(0.78, "Filtering predictions…")
-            deeplabcut.filterpredictions(
-                str(self.project_config_path),
-                video_paths,
-                videotype=".mp4",
-                filtertype="median",
-                windowlength=5,
-                destfolder=str(output_folder),
-            )
-
         csv_path = Path(output_folder) / f"skellyclicker_machine_labels_iteration_{analyze_iteration}.csv"
 
         # Cross-folder analyze is allowed; merge still keys rows by video basename.
@@ -310,27 +299,61 @@ class DeeplabcutHandler(BaseModel):
             json.dump(metadata, f, indent=2)
         print(f"Saved annotation metadata to {metadata_path}")
 
-        # Merge + sidecars before plot/annotate so large multi-video runs still
-        # produce machine CSVs if matplotlib/OpenCV later aborts.
+        # Write machine CSVs as soon as inference finishes so a later filter/plot
+        # crash (e.g. Tk teardown) does not lose ~hours of work. DLC already wrote
+        # per-video analysis CSVs with save_as_csv=True; merge those now (unfiltered).
         def on_merge_progress(done: int, total: int, video_label: str) -> None:
             if total <= 0:
                 return
-            # Reserve 0.82–0.94 for one-video-at-a-time merge/export.
-            frac = 0.82 + 0.12 * (done / total)
+            # Reserve 0.76–0.88 for one-video-at-a-time merge/export.
+            frac = 0.76 + 0.12 * (done / total)
             report(frac, f"Merging machine labels ({done}/{total}): {video_label}")
 
-        report(0.82, "Merging machine labels CSV…")
+        report(0.76, "Merging machine labels CSV…")
         per_video = self.merge_csvs_for_skellyclicker(
             csv_folder_path=str(output_folder),
             output_path=str(csv_path),
-            filtered=filter_videos,
+            filtered=False,
             video_paths=video_paths,
             on_video_progress=on_merge_progress,
         )
         logger.info(
-            "Wrote %d per-video machine CSV(s) next to source videos",
+            "Wrote %d per-video machine CSV(s) next to source videos (post-inference)",
             len(per_video),
         )
+
+        # Optional filter — on success, overwrite machine CSVs with filtered rows.
+        # On failure, keep the unfiltered CSVs already on disk.
+        used_filtered = False
+        if filter_videos:
+            report(0.90, "Filtering predictions…")
+            try:
+                deeplabcut.filterpredictions(
+                    str(self.project_config_path),
+                    video_paths,
+                    videotype=".mp4",
+                    filtertype="median",
+                    windowlength=5,
+                    destfolder=str(output_folder),
+                )
+                report(0.92, "Merging filtered machine labels CSV…")
+                per_video = self.merge_csvs_for_skellyclicker(
+                    csv_folder_path=str(output_folder),
+                    output_path=str(csv_path),
+                    filtered=True,
+                    video_paths=video_paths,
+                    on_video_progress=on_merge_progress,
+                )
+                used_filtered = True
+                logger.info(
+                    "Re-wrote %d per-video machine CSV(s) from filtered predictions",
+                    len(per_video),
+                )
+            except Exception as exc:
+                logger.exception(
+                    "filterpredictions failed; keeping unfiltered machine CSVs: %s", exc
+                )
+                report(0.90, f"Filtering skipped ({exc})")
 
         # Optional plots — must not block or undo CSV outputs on failure.
         # Force Agg: DLC defaults often pick TkAgg; plotting runs on a job thread and
@@ -343,7 +366,7 @@ class DeeplabcutHandler(BaseModel):
             deeplabcut.plot_trajectories(
                 config=self.project_config_path,
                 videos=video_paths,
-                filtered=filter_videos,
+                filtered=used_filtered,
                 destfolder=str(output_folder),
             )
         except Exception as exc:
