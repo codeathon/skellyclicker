@@ -18,7 +18,13 @@ _RUNNER = Path(__file__).with_name("tk_dialog_runner.py")
 
 
 def check_dialog_availability() -> tuple[bool, str]:
-	"""Probe whether a native picker can open (zenity on Linux, else tkinter)."""
+	"""Probe whether a native picker can open (zenity on Linux, else tkinter).
+
+	Never create ``tk.Tk()`` in this process. Uvicorn/FastAPI call this from a
+	non-mainloop thread; in-process Tk then blows up at GC/shutdown with
+	``RuntimeError: main thread is not in main loop`` / ``Tcl_AsyncDelete``.
+	Real tk dialogs already run in a subprocess (``tk_dialog_runner.py``).
+	"""
 	if sys.platform.startswith("linux"):
 		has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 		if not has_display:
@@ -32,24 +38,22 @@ def check_dialog_availability() -> tuple[bool, str]:
 
 		if zenity_available():
 			return True, "Native file dialogs are available (zenity)."
+		# Prefer zenity on Linux; do not fall through to in-process Tk.
+		return (
+			False,
+			"Install zenity for native file dialogs: sudo apt install zenity "
+			"(or use the browser file picker).",
+		)
 
 	try:
-		import tkinter as tk
+		import tkinter  # noqa: F401 — import probe only; dialogs use a subprocess
 	except ImportError:
 		return (
 			False,
 			"Install dialog support on Ubuntu: sudo apt install zenity python3-tk",
 		)
 
-	try:
-		root = tk.Tk()
-		root.withdraw()
-		root.update_idletasks()
-		root.destroy()
-	except tk.TclError as exc:
-		return False, f"tkinter cannot connect to a display: {exc}"
-
-	return True, "Native file dialogs are available (tkinter)."
+	return True, "Native file dialogs are available (tkinter subprocess)."
 
 
 def dialog_startup_warning() -> str | None:

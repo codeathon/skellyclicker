@@ -50,6 +50,19 @@ def test_linux_with_zenity_is_available():
 	assert "zenity" in detail
 
 
+def test_linux_without_zenity_does_not_create_tk():
+	"""In-process Tk under uvicorn causes Tcl_AsyncDelete at shutdown — never probe with Tk()."""
+	with patch.object(sys, "platform", "linux"):
+		with patch.dict("os.environ", {"DISPLAY": ":0"}, clear=True):
+			with patch(
+				"skellyclicker.services.zenity_dialog.zenity_available",
+				return_value=False,
+			):
+				available, detail = check_dialog_availability()
+	assert available is False
+	assert "zenity" in detail.lower()
+
+
 def test_import_error_reports_ubuntu_hint():
 	with patch.object(sys, "platform", "darwin"):
 		with patch.dict("os.environ", {"DISPLAY": ":0"}, clear=True):

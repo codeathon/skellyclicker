@@ -1,8 +1,12 @@
 """Launch SkellyClicker web server: python -m skellyclicker.api"""
 
+import os
 import sys
 import webbrowser
 from threading import Timer
+
+# Headless matplotlib before any DLC/plot import — avoids TkAgg in worker threads.
+os.environ.setdefault("MPLBACKEND", "Agg")
 
 try:
 	import uvicorn
